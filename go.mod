@@ -1,4 +1,4 @@
-module github.com/your-org/directory-exporter
+module github.com/supptel/directory-exporter
 
 go 1.22
 

@@ -7,7 +7,7 @@ WORKDIR /build
 COPY . .
 
 RUN if [ ! -f go.mod ]; then \
-        go mod init github.com/your-org/directory-exporter; \
+        go mod init github.com/supptel/directory-exporter; \
     fi
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \

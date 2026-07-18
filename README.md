@@ -327,11 +327,11 @@ Build the image once and push it to a registry. Target servers only need `.env` 
 
 ```bash
 # Build and push from your build machine
-docker build -t ghcr.io/your-org/directory-exporter:latest .
-docker push ghcr.io/your-org/directory-exporter:latest
+docker build -t ghcr.io/supptel/directory-exporter:latest .
+docker push ghcr.io/supptel/directory-exporter:latest
 
 # On each target server — replace the build: block in docker-compose.yml with:
-#   image: ghcr.io/your-org/directory-exporter:latest
+#   image: ghcr.io/supptel/directory-exporter:latest
 docker compose up -d
 ```
 
