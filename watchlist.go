@@ -48,6 +48,7 @@ func (wl *WatchList) Len() int {
 // For each target:
 //   - Dirs non-empty → use exactly those subdirs (relative to Base), no filesystem walk.
 //   - Dirs empty     → auto-discover subdirectories up to MaxDepth via WalkDir.
+//                    If Pattern is set, only matching directories are kept.
 func discoverTargets(targets []Target) ([]WatchEntry, error) {
 	var all []WatchEntry
 	var firstErr error
@@ -66,11 +67,20 @@ func discoverTarget(t Target) ([]WatchEntry, error) {
 	if len(t.Dirs) > 0 {
 		return resolveExplicitDirs(base, t.Dirs)
 	}
+	if t.Pattern != "" {
+		if _, err := filepath.Match(t.Pattern, "test"); err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %w", t.Pattern, err)
+		}
+	}
 	maxDepth := t.MaxDepth
 	if maxDepth == 0 {
-		maxDepth = 1
+		if t.Pattern != "" {
+			maxDepth = len(strings.Split(t.Pattern, string(os.PathSeparator)))
+		} else {
+			maxDepth = 1
+		}
 	}
-	return discoverDirectories(base, maxDepth)
+	return discoverDirectories(base, maxDepth, t.Pattern)
 }
 
 // resolveExplicitDirs turns a list of relative dir paths into WatchEntries
@@ -141,12 +151,15 @@ func validateTargets(targets []Target) error {
 // discoverDirectories walks basePath up to maxDepth and returns one WatchEntry
 // per subdirectory. This is used for auto-discovery when Dirs is not specified.
 //
+// If pattern is non-empty, only directories whose relative path matches the glob
+// pattern are added to the watch list. A * in the pattern matches one path segment.
+//
 // Label derivation:
 //
 //	depth 1: stream=<dir>,        type=""
 //	depth 2: stream=<dir>,        type=<subdir>
 //	depth N: stream=<first-part>, type=<rest joined with "/">
-func discoverDirectories(basePath string, maxDepth int) ([]WatchEntry, error) {
+func discoverDirectories(basePath string, maxDepth int, pattern string) ([]WatchEntry, error) {
 	basePath = filepath.Clean(basePath)
 	var entries []WatchEntry
 	var firstErr error
@@ -172,6 +185,19 @@ func discoverDirectories(basePath string, maxDepth int) ([]WatchEntry, error) {
 
 		if depth > maxDepth {
 			return filepath.SkipDir
+		}
+
+		if pattern != "" {
+			matched, matchErr := filepath.Match(pattern, rel)
+			if matchErr != nil {
+				if firstErr == nil {
+					firstErr = matchErr
+				}
+				return nil
+			}
+			if !matched {
+				return nil
+			}
 		}
 
 		labels := DirLabels{Base: basePath}

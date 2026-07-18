@@ -192,6 +192,12 @@ targets:
   - base: /data
     max_depth: 1
 
+  # Pattern-based auto-discover — watches only subdirs matching the glob pattern.
+  # A * matches one path segment. This watches streams/<stream>/nodes/<node>/input
+  # and ignores everything else under /streams.
+  - base: /streams
+    pattern: "*/nodes/*/input"
+
   # Multiple base paths on different mounts
   - base: /mnt/nas/archive
     dirs:

@@ -40,12 +40,19 @@ func main() {
 
 	// Log each configured target so the operator can verify the config at a glance
 	for _, t := range cfg.Targets {
-		if len(t.Dirs) > 0 {
+		switch {
+		case len(t.Dirs) > 0:
 			log.Info("target configured",
 				"base", t.Base,
 				"dirs", fmt.Sprintf("%v", t.Dirs),
 				"mode", "explicit")
-		} else {
+		case t.Pattern != "":
+			log.Info("target configured",
+				"base", t.Base,
+				"pattern", t.Pattern,
+				"max_depth", t.MaxDepth,
+				"mode", "auto-discover-pattern")
+		default:
 			log.Info("target configured",
 				"base", t.Base,
 				"max_depth", t.MaxDepth,
