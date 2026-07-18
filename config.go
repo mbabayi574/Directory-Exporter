@@ -100,9 +100,12 @@ func LoadConfig(log *slog.Logger) (*Config, error) {
 		cfg.Targets = []Target{{Base: basePath, MaxDepth: maxDepth}}
 	}
 
-	// Ensure every target has a sane MaxDepth
+	// Ensure every target has a sane MaxDepth.
+	// When a Pattern is set, leave MaxDepth at 0 so discoverTarget can
+	// auto-compute it from the pattern depth. Only default to 1 for
+	// plain auto-discover (no pattern, no explicit dirs).
 	for i := range cfg.Targets {
-		if cfg.Targets[i].MaxDepth == 0 {
+		if cfg.Targets[i].MaxDepth == 0 && cfg.Targets[i].Pattern == "" {
 			cfg.Targets[i].MaxDepth = 1
 		}
 	}
