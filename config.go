@@ -15,7 +15,7 @@ import (
 // Target defines one watched base path and which subdirectories within it to monitor.
 // If Dirs is empty the exporter auto-discovers all subdirectories up to MaxDepth.
 // If Dirs is non-empty only those explicit paths (relative to Base) are monitored.
-3// Pattern is an optional glob filter for auto-discovery; only directories whose
+// Pattern is an optional glob filter for auto-discovery; only directories whose
 // relative path matches the pattern are watched. Use * to match a single path segment.
 // Example (base: /streams): pattern: "*/nodes/*/input" watches only
 // streams/<stream>/nodes/<node>/input directories.
