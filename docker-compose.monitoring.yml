@@ -1,20 +1,57 @@
-# Monitoring-stack overlay
+# Monitoring-stack — full Prometheus + Grafana
 #
-# Layer on top of docker-compose.yml to join an existing Prometheus/Grafana stack:
+# Standalone usage:
 #   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d --build
 #
-# Requirements:
-#   - The monitoring stack must be running first (creates the external network)
-#   - Set MONITORING_NETWORK= in .env if your network has a different name
-#     (run: docker network ls | grep monitoring)
+# This overlay adds Prometheus and Grafana with auto-provisioned
+# dashboard and datasource. The exporter joins the shared "monitoring" network.
 
 networks:
-  monitoring_monitoring:
-    external: true
-    name: ${MONITORING_NETWORK:-monitoring_monitoring}
+  monitoring:
 
 services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - monitoring
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+
   exporter:
     networks:
       - default
-      - monitoring_monitoring
+      - monitoring
+
+volumes:
+  prometheus_data:
+  grafana_data:
