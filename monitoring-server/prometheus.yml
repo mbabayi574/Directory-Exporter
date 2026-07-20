@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  # Remote Directory Exporter instances
+  - job_name: "directory-exporter"
+    scrape_interval: 30s
+    scrape_timeout:  5s
+    static_configs:
+      - targets: ["172.29.11.102:9200"]
+        labels:
+          environment: "production"
+      # Add more exporters as needed:
+      # - targets: ["172.29.11.103:9200"]
+      #   labels:
+      #     environment: "production"
+
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
