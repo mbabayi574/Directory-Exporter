@@ -113,7 +113,7 @@ func TestDiscoverDirectories_Depth1(t *testing.T) {
 	os.MkdirAll(filepath.Join(base, "orders"), 0755)
 	os.MkdirAll(filepath.Join(base, "payments"), 0755)
 
-	entries, err := discoverDirectories(base, 1, "")
+	entries, err := discoverDirectories(base, base, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestDiscoverDirectories_PatternFilter(t *testing.T) {
 		os.MkdirAll(filepath.Join(streamsBase, p), 0755)
 	}
 
-	entries, err := discoverDirectories(streamsBase, 4, "*/nodes/*/input")
+	entries, err := discoverDirectories(streamsBase, streamsBase, 4, "*/nodes/*/input")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestDiscoverDirectories_Depth2Labels(t *testing.T) {
 	base := t.TempDir()
 	os.MkdirAll(filepath.Join(base, "orders", "buffer"), 0755)
 
-	entries, err := discoverDirectories(base, 2, "")
+	entries, err := discoverDirectories(base, base, 2, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,8 @@ max_files_per_dir:  0
 # A * matches one path segment. With base: /streams, this watches every
 # streams/<stream>/nodes/<node>/input directory and ignores everything else.
 targets:
-  - base: /streams
+  - base: /home/bobby/Documents/DirectoryExporter/streams
+    label: /streams
     pattern: "*/nodes/*/input"
 
 # Example 2 — explicit list (recommended for production)

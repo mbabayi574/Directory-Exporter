@@ -21,6 +21,7 @@ import (
 // streams/<stream>/nodes/<node>/input directories.
 type Target struct {
 	Base     string   `yaml:"base"`
+	Label    string   `yaml:"label"`
 	Dirs     []string `yaml:"dirs"`
 	MaxDepth int      `yaml:"max_depth"`
 	Pattern  string   `yaml:"pattern"`

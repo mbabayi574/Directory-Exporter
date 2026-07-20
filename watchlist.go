@@ -64,8 +64,12 @@ func discoverTargets(targets []Target) ([]WatchEntry, error) {
 
 func discoverTarget(t Target) ([]WatchEntry, error) {
 	base := filepath.Clean(t.Base)
+	label := t.Label
+	if label == "" {
+		label = base
+	}
 	if len(t.Dirs) > 0 {
-		return resolveExplicitDirs(base, t.Dirs)
+		return resolveExplicitDirs(base, label, t.Dirs)
 	}
 	if t.Pattern != "" {
 		if _, err := filepath.Match(t.Pattern, "test"); err != nil {
@@ -80,13 +84,13 @@ func discoverTarget(t Target) ([]WatchEntry, error) {
 			maxDepth = 1
 		}
 	}
-	return discoverDirectories(base, maxDepth, t.Pattern)
+	return discoverDirectories(base, label, maxDepth, t.Pattern)
 }
 
 // resolveExplicitDirs turns a list of relative dir paths into WatchEntries
 // without touching the filesystem. Missing directories are caught at scan time
 // via scrape_success=0.
-func resolveExplicitDirs(base string, dirs []string) ([]WatchEntry, error) {
+func resolveExplicitDirs(base, label string, dirs []string) ([]WatchEntry, error) {
 	var entries []WatchEntry
 	seen := make(map[string]bool, len(dirs))
 	for _, d := range dirs {
@@ -99,7 +103,7 @@ func resolveExplicitDirs(base string, dirs []string) ([]WatchEntry, error) {
 		absPath := filepath.Join(base, rel)
 		parts := strings.Split(rel, string(os.PathSeparator))
 
-		labels := DirLabels{Base: base}
+		labels := DirLabels{Base: label}
 		switch len(parts) {
 		case 1:
 			labels.Stream = parts[0]
@@ -159,7 +163,7 @@ func validateTargets(targets []Target) error {
 //	depth 1: stream=<dir>,        type=""
 //	depth 2: stream=<dir>,        type=<subdir>
 //	depth N: stream=<first-part>, type=<rest joined with "/">
-func discoverDirectories(basePath string, maxDepth int, pattern string) ([]WatchEntry, error) {
+func discoverDirectories(basePath, label string, maxDepth int, pattern string) ([]WatchEntry, error) {
 	basePath = filepath.Clean(basePath)
 	var entries []WatchEntry
 	var firstErr error
@@ -200,7 +204,7 @@ func discoverDirectories(basePath string, maxDepth int, pattern string) ([]Watch
 			}
 		}
 
-		labels := DirLabels{Base: basePath}
+		labels := DirLabels{Base: label}
 		switch {
 		case depth == 1:
 			labels.Stream = parts[0]
