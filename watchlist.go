@@ -48,7 +48,7 @@ func (wl *WatchList) Len() int {
 // For each target:
 //   - Dirs non-empty → use exactly those subdirs (relative to Base), no filesystem walk.
 //   - Dirs empty     → auto-discover subdirectories up to MaxDepth via WalkDir.
-//                    If Pattern is set, only matching directories are kept.
+//     If Pattern is set, only matching directories are kept.
 func discoverTargets(targets []Target) ([]WatchEntry, error) {
 	var all []WatchEntry
 	var firstErr error
@@ -175,7 +175,20 @@ func discoverDirectories(basePath, label string, maxDepth int, pattern string) (
 			}
 			return nil
 		}
-		if path == basePath || !d.IsDir() {
+		if path == basePath {
+			return nil
+		}
+
+		// Check if this is a directory or a symlink pointing to a directory.
+		// filepath.WalkDir does not follow symlinks, so d.IsDir() returns
+		// false for symlink entries even when the target is a directory.
+		isDir := d.IsDir()
+		if !isDir && d.Type()&os.ModeSymlink != 0 {
+			if info, statErr := os.Stat(path); statErr == nil {
+				isDir = info.IsDir()
+			}
+		}
+		if !isDir {
 			return nil
 		}
 

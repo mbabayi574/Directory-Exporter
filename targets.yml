@@ -42,7 +42,7 @@ max_files_per_dir:  0
 targets:
   - base: /home/bobby/Documents/DirectoryExporter/streams
     label: /streams
-    pattern: "*/nodes/*/input"
+    pattern: "*/nodes/*/input/*"
 
 # Example 2 — explicit list (recommended for production)
 # Watches only the three named subdirs; ignores everything else under /streams.

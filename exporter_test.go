@@ -156,6 +156,55 @@ func TestDiscoverDirectories_PatternFilter(t *testing.T) {
 	}
 }
 
+func TestDiscoverDirectories_SymlinkToDir(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+
+	// Create a real directory outside the base to serve as the symlink target.
+	target := filepath.Join(base, "real_target")
+	os.MkdirAll(filepath.Join(target, "data"), 0755)
+	os.WriteFile(filepath.Join(target, "data", "file.txt"), []byte("x"), 0644)
+
+	// Create the tree structure with symlinks inside input/.
+	os.MkdirAll(filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input"), 0755)
+	os.Symlink(target, filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input", "STREAM_A"))
+
+	// Pattern: */nodes/*/input/* should match the symlink target.
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries want 1 (symlink-to-dir should be included):\n%+v", len(entries), entries)
+	}
+	if entries[0].Labels.Stream != "Nokia" {
+		t.Errorf("Stream=%q want Nokia", entries[0].Labels.Stream)
+	}
+	if entries[0].Labels.Type != "nodes/BLN_1/input/STREAM_A" {
+		t.Errorf("Type=%q want nodes/BLN_1/input/STREAM_A", entries[0].Labels.Type)
+	}
+}
+
+func TestDiscoverDirectories_SymlinkToFileIgnored(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+
+	// Create a regular file to symlink to (not a directory).
+	target := filepath.Join(base, "somefile.txt")
+	os.WriteFile(target, []byte("x"), 0644)
+
+	os.MkdirAll(filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input"), 0755)
+	os.Symlink(target, filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input", "FILE_LINK"))
+
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("got %d entries want 0 (symlink-to-file should be ignored):\n%+v", len(entries), entries)
+	}
+}
+
 func TestDiscoverDirectories_Depth2Labels(t *testing.T) {
 	base := t.TempDir()
 	os.MkdirAll(filepath.Join(base, "orders", "buffer"), 0755)
