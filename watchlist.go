@@ -218,12 +218,24 @@ func discoverDirectories(basePath, label string, maxDepth int, pattern string) (
 		}
 
 		labels := DirLabels{Base: label}
-		switch {
-		case depth == 1:
-			labels.Stream = parts[0]
-		default:
-			labels.Stream = parts[0]
-			labels.Type = strings.Join(parts[1:], "/")
+		labels.Stream = parts[0]
+		if depth > 1 {
+			if pattern != "" {
+				patParts := strings.Split(filepath.ToSlash(pattern), "/")
+				if len(patParts) == len(parts) {
+					var typeParts []string
+					for i := 1; i < len(parts); i++ {
+						if strings.ContainsAny(patParts[i], "*?[") {
+							typeParts = append(typeParts, parts[i])
+						}
+					}
+					labels.Type = strings.Join(typeParts, "/")
+				} else {
+					labels.Type = strings.Join(parts[1:], "/")
+				}
+			} else {
+				labels.Type = strings.Join(parts[1:], "/")
+			}
 		}
 
 		entries = append(entries, WatchEntry{AbsPath: path, Labels: labels})

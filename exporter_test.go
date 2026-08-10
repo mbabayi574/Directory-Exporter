@@ -180,8 +180,28 @@ func TestDiscoverDirectories_SymlinkToDir(t *testing.T) {
 	if entries[0].Labels.Stream != "Nokia" {
 		t.Errorf("Stream=%q want Nokia", entries[0].Labels.Stream)
 	}
-	if entries[0].Labels.Type != "nodes/BLN_1/input/STREAM_A" {
-		t.Errorf("Type=%q want nodes/BLN_1/input/STREAM_A", entries[0].Labels.Type)
+	if entries[0].Labels.Type != "BLN_1/STREAM_A" {
+		t.Errorf("Type=%q want BLN_1/STREAM_A", entries[0].Labels.Type)
+	}
+}
+
+func TestDiscoverDirectories_DynamicTypeFromPattern(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	os.MkdirAll(filepath.Join(streamsBase, "Back_Dump", "nodes", "Back_Dump", "input", "COLLECTED_0_1020"), 0755)
+
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries want 1:\n%+v", len(entries), entries)
+	}
+	if entries[0].Labels.Stream != "Back_Dump" {
+		t.Errorf("Stream=%q want Back_Dump", entries[0].Labels.Stream)
+	}
+	if entries[0].Labels.Type != "Back_Dump/COLLECTED_0_1020" {
+		t.Errorf("Type=%q want Back_Dump/COLLECTED_0_1020", entries[0].Labels.Type)
 	}
 }
 
