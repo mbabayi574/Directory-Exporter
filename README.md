@@ -487,7 +487,7 @@ Items that were already correct and verified:
 | `read_only: true` | Container root filesystem is mounted read-only |
 | Constant-time secret comparison | `subtle.ConstantTimeCompare` — no timing side-channel on the reload token |
 | Reload flood protection | `reloadCh` is buffered at 1; excess triggers are dropped silently |
-| Symlink traversal | `WalkDir` uses `lstat` — symlinks to directories are never followed |
+| Symlink traversal | Symlinks to directories are safely followed with loop/cycle detection and max_depth bounds |
 | Memory and CPU limits | cgroup limits enforced via `deploy.resources` in compose |
 | Read-only volume mount | Data directories mounted `:ro` — exporter cannot write to monitored data |
 

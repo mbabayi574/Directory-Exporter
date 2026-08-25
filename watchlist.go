@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,7 +78,12 @@ func discoverTarget(t Target) ([]WatchEntry, error) {
 	maxDepth := t.MaxDepth
 	if maxDepth == 0 {
 		if t.Pattern != "" {
-			maxDepth = len(strings.Split(t.Pattern, string(os.PathSeparator)))
+			cleanPat := strings.Trim(filepath.ToSlash(t.Pattern), "/")
+			if cleanPat != "" {
+				maxDepth = len(strings.Split(cleanPat, "/"))
+			} else {
+				maxDepth = 1
+			}
 		} else {
 			maxDepth = 1
 		}
@@ -155,6 +159,9 @@ func validateTargets(targets []Target) error {
 // discoverDirectories walks basePath up to maxDepth and returns one WatchEntry
 // per subdirectory. This is used for auto-discovery when Dirs is not specified.
 //
+// Symbolic links to directories are followed and traversed up to maxDepth.
+// Symlink loops / cycles are detected and skipped to prevent infinite recursion.
+//
 // If pattern is non-empty, only directories whose relative path matches the glob
 // pattern are added to the watch list. A * in the pattern matches one path segment.
 //
@@ -168,82 +175,114 @@ func discoverDirectories(basePath, label string, maxDepth int, pattern string) (
 	var entries []WatchEntry
 	var firstErr error
 
-	walkErr := filepath.WalkDir(basePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			return nil
-		}
-		if path == basePath {
-			return nil
-		}
-
-		// Check if this is a directory or a symlink pointing to a directory.
-		// filepath.WalkDir does not follow symlinks, so d.IsDir() returns
-		// false for symlink entries even when the target is a directory.
-		isDir := d.IsDir()
-		if !isDir && d.Type()&os.ModeSymlink != 0 {
-			if info, statErr := os.Stat(path); statErr == nil {
-				isDir = info.IsDir()
-			}
-		}
-		if !isDir {
-			return nil
-		}
-
-		rel, relErr := filepath.Rel(basePath, path)
-		if relErr != nil {
-			return nil
-		}
-
-		parts := strings.Split(rel, string(os.PathSeparator))
-		depth := len(parts)
-
-		if depth > maxDepth {
-			return filepath.SkipDir
-		}
-
-		if pattern != "" {
-			matched, matchErr := filepath.Match(pattern, rel)
-			if matchErr != nil {
-				if firstErr == nil {
-					firstErr = matchErr
-				}
-				return nil
-			}
-			if !matched {
-				return nil
-			}
-		}
-
-		labels := DirLabels{Base: label}
-		labels.Stream = parts[0]
-		if depth > 1 {
-			if pattern != "" {
-				patParts := strings.Split(filepath.ToSlash(pattern), "/")
-				if len(patParts) == len(parts) {
-					var typeParts []string
-					for i := 1; i < len(parts); i++ {
-						if strings.ContainsAny(patParts[i], "*?[") {
-							typeParts = append(typeParts, parts[i])
-						}
-					}
-					labels.Type = strings.Join(typeParts, "/")
-				} else {
-					labels.Type = strings.Join(parts[1:], "/")
-				}
-			} else {
-				labels.Type = strings.Join(parts[1:], "/")
-			}
-		}
-
-		entries = append(entries, WatchEntry{AbsPath: path, Labels: labels})
-		return nil
-	})
-
-	if walkErr != nil && firstErr == nil {
-		firstErr = walkErr
+	info, err := os.Stat(basePath)
+	if err != nil {
+		return nil, err
 	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("base path %q is not a directory", basePath)
+	}
+
+	realBasePath, err := filepath.EvalSymlinks(basePath)
+	if err != nil {
+		realBasePath = basePath
+	}
+
+	ancestors := make(map[string]bool)
+	ancestors[realBasePath] = true
+
+	var walk func(currentPath, relPath string, depth int)
+	walk = func(currentPath, relPath string, depth int) {
+		if depth > maxDepth {
+			return
+		}
+
+		if depth >= 1 {
+			matched := true
+			if pattern != "" {
+				var matchErr error
+				matched, matchErr = filepath.Match(pattern, relPath)
+				if matchErr != nil {
+					if firstErr == nil {
+						firstErr = matchErr
+					}
+					return
+				}
+			}
+
+			if matched {
+				parts := strings.Split(relPath, string(os.PathSeparator))
+				labels := DirLabels{Base: label}
+				labels.Stream = parts[0]
+				if depth > 1 {
+					if pattern != "" {
+						patParts := strings.Split(strings.Trim(filepath.ToSlash(pattern), "/"), "/")
+						if len(patParts) == len(parts) {
+							var typeParts []string
+							for i := 1; i < len(parts); i++ {
+								if strings.ContainsAny(patParts[i], "*?[") {
+									typeParts = append(typeParts, parts[i])
+								}
+							}
+							labels.Type = strings.Join(typeParts, "/")
+						} else {
+							labels.Type = strings.Join(parts[1:], "/")
+						}
+					} else {
+						labels.Type = strings.Join(parts[1:], "/")
+					}
+				}
+
+				entries = append(entries, WatchEntry{AbsPath: currentPath, Labels: labels})
+			}
+		}
+
+		if depth < maxDepth {
+			dirEntries, readErr := os.ReadDir(currentPath)
+			if readErr != nil {
+				if firstErr == nil {
+					firstErr = readErr
+				}
+				return
+			}
+
+			for _, d := range dirEntries {
+				childPath := filepath.Join(currentPath, d.Name())
+				childRel := d.Name()
+				if relPath != "" {
+					childRel = filepath.Join(relPath, d.Name())
+				}
+
+				isDir := d.IsDir()
+				if !isDir && d.Type()&os.ModeSymlink != 0 {
+					if statInfo, statErr := os.Stat(childPath); statErr == nil {
+						isDir = statInfo.IsDir()
+					}
+				}
+
+				if !isDir {
+					continue
+				}
+
+				realChildPath, evalErr := filepath.EvalSymlinks(childPath)
+				if evalErr == nil {
+					if ancestors[realChildPath] {
+						// Cycle detected, skip descending into this directory
+						continue
+					}
+					ancestors[realChildPath] = true
+				}
+
+				walk(childPath, childRel, depth+1)
+
+				if evalErr == nil {
+					delete(ancestors, realChildPath)
+				}
+			}
+		}
+	}
+
+	walk(basePath, "", 0)
+
 	return entries, firstErr
 }

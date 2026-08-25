@@ -106,6 +106,81 @@ func TestScanDir_Nonexistent(t *testing.T) {
 	}
 }
 
+func TestScanDir_SymlinkDirNotCountedAndSymlinkFileCounted(t *testing.T) {
+	dir := t.TempDir()
+	extDir := t.TempDir()
+
+	// Create a real file in extDir and symlink to it
+	realFile := filepath.Join(extDir, "target_file.txt")
+	if err := os.WriteFile(realFile, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realFile, filepath.Join(dir, "symlink_file.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a real dir in extDir and symlink to it
+	realSubDir := filepath.Join(extDir, "target_subdir")
+	if err := os.MkdirAll(realSubDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realSubDir, filepath.Join(dir, "symlink_dir")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a regular file and regular subdir
+	if err := os.WriteFile(filepath.Join(dir, "regular.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "regular_subdir"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a broken symlink
+	if err := os.Symlink(filepath.Join(extDir, "nonexistent.txt"), filepath.Join(dir, "broken_link")); err != nil {
+		t.Fatal(err)
+	}
+
+	r := scanDir(context.Background(), dir, 0, 0)
+	if r.ScanSuccess != 1 {
+		t.Errorf("ScanSuccess=%g want 1", r.ScanSuccess)
+	}
+	// Expected files: regular.txt and symlink_file.txt (2 files).
+	// symlink_dir, regular_subdir, and broken_link must NOT be counted as files.
+	if r.FileCount != 2 {
+		t.Errorf("FileCount=%d want 2 (1 regular file + 1 symlink file)", r.FileCount)
+	}
+	if r.OldestTimestamp == 0 || r.NewestTimestamp == 0 {
+		t.Error("timestamps should be non-zero when files exist")
+	}
+}
+
+func TestScanDir_ScanningSymlinkTargetDir(t *testing.T) {
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real_storage")
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"file1.txt", "file2.txt", "file3.txt"} {
+		if err := os.WriteFile(filepath.Join(realDir, name), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	symlinkDir := filepath.Join(base, "symlink_storage")
+	if err := os.Symlink(realDir, symlinkDir); err != nil {
+		t.Fatal(err)
+	}
+
+	r := scanDir(context.Background(), symlinkDir, 0, 0)
+	if r.ScanSuccess != 1 {
+		t.Errorf("ScanSuccess=%g want 1", r.ScanSuccess)
+	}
+	if r.FileCount != 3 {
+		t.Errorf("FileCount=%d want 3 for symlinked directory", r.FileCount)
+	}
+}
+
 // ── watchlist / discovery ─────────────────────────────────────────────────────
 
 func TestDiscoverDirectories_Depth1(t *testing.T) {
@@ -252,6 +327,209 @@ func TestDiscoverDirectories_Depth2Labels(t *testing.T) {
 	}
 	if leaf.Labels.Type != "buffer" {
 		t.Errorf("Type=%q want buffer", leaf.Labels.Type)
+	}
+}
+
+func TestDiscoverDirectories_IntermediateSymlinks(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	extBase := filepath.Join(base, "external_install")
+
+	// Set up the node directory structure matching the user's example
+	nodeDir := filepath.Join(streamsBase, "Nokia", "nodes", "Enc_CPM")
+	os.MkdirAll(nodeDir, 0755)
+
+	// Real subdirectories
+	os.MkdirAll(filepath.Join(nodeDir, "input"), 0755)
+	os.MkdirAll(filepath.Join(nodeDir, "output"), 0755)
+
+	// Symbolic links pointing to external directories
+	symlinks := []string{
+		"audit", "bin", "control", "discarded", "log",
+		"rejected", "reprocess", "status", "storage", "temp",
+	}
+	for _, name := range symlinks {
+		targetDir := filepath.Join(extBase, name)
+		os.MkdirAll(targetDir, 0755)
+		if err := os.Symlink(targetDir, filepath.Join(nodeDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Pattern: */nodes/*/* (depth 4)
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Total expected: 2 real dirs + 10 symlinked dirs = 12 entries
+	if len(entries) != 12 {
+		t.Fatalf("got %d entries want 12:\n%+v", len(entries), entries)
+	}
+
+	foundTypes := make(map[string]bool)
+	for _, e := range entries {
+		if e.Labels.Stream != "Nokia" {
+			t.Errorf("expected Stream=Nokia, got %q", e.Labels.Stream)
+		}
+		foundTypes[e.Labels.Type] = true
+	}
+
+	expectedTypes := []string{
+		"Enc_CPM/input", "Enc_CPM/output", "Enc_CPM/audit", "Enc_CPM/bin",
+		"Enc_CPM/control", "Enc_CPM/discarded", "Enc_CPM/log", "Enc_CPM/rejected",
+		"Enc_CPM/reprocess", "Enc_CPM/status", "Enc_CPM/storage", "Enc_CPM/temp",
+	}
+	for _, exp := range expectedTypes {
+		if !foundTypes[exp] {
+			t.Errorf("missing expected type label %q", exp)
+		}
+	}
+}
+
+func TestDiscoverDirectories_DeepSymlinkTraversal(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	extBase := filepath.Join(base, "external_install")
+
+	nodeDir := filepath.Join(streamsBase, "Nokia", "nodes", "Enc_CPM")
+	os.MkdirAll(nodeDir, 0755)
+
+	// discarded is a symlink pointing to an external directory
+	discardedTarget := filepath.Join(extBase, "discarded")
+	os.MkdirAll(filepath.Join(discardedTarget, "queue_1"), 0755)
+	os.MkdirAll(filepath.Join(discardedTarget, "queue_2"), 0755)
+	if err := os.Symlink(discardedTarget, filepath.Join(nodeDir, "discarded")); err != nil {
+		t.Fatal(err)
+	}
+
+	// input is a real directory with a subdirectory
+	os.MkdirAll(filepath.Join(nodeDir, "input", "queue_in"), 0755)
+
+	// Pattern: */nodes/*/*/* (depth 5)
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/*/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries want 3:\n%+v", len(entries), entries)
+	}
+
+	foundTypes := make(map[string]bool)
+	for _, e := range entries {
+		if e.Labels.Stream != "Nokia" {
+			t.Errorf("expected Stream=Nokia, got %q", e.Labels.Stream)
+		}
+		foundTypes[e.Labels.Type] = true
+	}
+
+	for _, exp := range []string{"Enc_CPM/discarded/queue_1", "Enc_CPM/discarded/queue_2", "Enc_CPM/input/queue_in"} {
+		if !foundTypes[exp] {
+			t.Errorf("missing expected type label %q in %+v", exp, foundTypes)
+		}
+	}
+}
+
+func TestDiscoverDirectories_SymlinkNodeDir(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	extBase := filepath.Join(base, "external_nodes")
+
+	// Enc_CPM itself is a symlink to an external node directory
+	realNodeDir := filepath.Join(extBase, "Enc_CPM")
+	os.MkdirAll(filepath.Join(realNodeDir, "input"), 0755)
+	os.MkdirAll(filepath.Join(realNodeDir, "output"), 0755)
+
+	// And inside the external node directory, discarded is also a symlink
+	discardedTarget := filepath.Join(base, "discarded_data")
+	os.MkdirAll(discardedTarget, 0755)
+	if err := os.Symlink(discardedTarget, filepath.Join(realNodeDir, "discarded")); err != nil {
+		t.Fatal(err)
+	}
+
+	nodesDir := filepath.Join(streamsBase, "Nokia", "nodes")
+	os.MkdirAll(nodesDir, 0755)
+	if err := os.Symlink(realNodeDir, filepath.Join(nodesDir, "Enc_CPM")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pattern: */nodes/*/* (depth 4)
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries want 3:\n%+v", len(entries), entries)
+	}
+
+	foundTypes := make(map[string]bool)
+	for _, e := range entries {
+		foundTypes[e.Labels.Type] = true
+	}
+	for _, exp := range []string{"Enc_CPM/input", "Enc_CPM/output", "Enc_CPM/discarded"} {
+		if !foundTypes[exp] {
+			t.Errorf("missing expected type label %q", exp)
+		}
+	}
+}
+
+func TestDiscoverDirectories_SymlinkCycleIgnored(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+
+	nodeDir := filepath.Join(streamsBase, "Nokia", "nodes", "Enc_CPM")
+	os.MkdirAll(filepath.Join(nodeDir, "input"), 0755)
+
+	// Create a recursive symlink cycle
+	if err := os.Symlink(nodeDir, filepath.Join(nodeDir, "self_loop")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(streamsBase, filepath.Join(nodeDir, "root_loop")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not hang or loop infinitely
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// input is found
+	foundInput := false
+	for _, e := range entries {
+		if e.Labels.Type == "Enc_CPM/input" {
+			foundInput = true
+		}
+	}
+	if !foundInput {
+		t.Error("expected Enc_CPM/input to be discovered despite symlink cycles")
+	}
+}
+
+func TestDiscoverDirectories_BrokenSymlinkIgnored(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+
+	nodeDir := filepath.Join(streamsBase, "Nokia", "nodes", "Enc_CPM")
+	os.MkdirAll(filepath.Join(nodeDir, "input"), 0755)
+
+	// Create broken symlink
+	if err := os.Symlink(filepath.Join(base, "nonexistent_target"), filepath.Join(nodeDir, "broken")); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries want 1 (broken symlink should be ignored):\n%+v", len(entries), entries)
+	}
+	if entries[0].Labels.Type != "Enc_CPM/input" {
+		t.Errorf("Type=%q want Enc_CPM/input", entries[0].Labels.Type)
 	}
 }
 
