@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -22,8 +23,8 @@ type ScanResult struct {
 // Small enough to avoid large allocations; large enough to amortise syscall overhead.
 const dirChunkSize = 256
 
-// scanDir reads a single directory, counts every regular file, and computes
-// oldest/newest modification timestamps.
+// scanDir reads a single directory, counts every regular file (and symlinks to regular files),
+// ignores subdirectories (and symlinks to directories), and computes oldest/newest modification timestamps.
 //
 //   - ctx         — cancels the scan if the parent ScanAll times out.
 //   - maxFiles    — cap on total regular files counted (0 = unlimited). When hit,
@@ -46,7 +47,7 @@ func scanDir(ctx context.Context, path string, maxFiles, maxStatFiles int) ScanR
 	defer f.Close()
 
 	var count int64    // regular files seen
-	var statsDone int  // e.Info() calls made (each is a lstat syscall)
+	var statsDone int  // stat calls made for timestamp computation
 	oldest := int64(math.MaxInt64)
 	newest := int64(math.MinInt64)
 	truncated := false
@@ -64,7 +65,23 @@ func scanDir(ctx context.Context, path string, maxFiles, maxStatFiles int) ScanR
 				truncated = true
 				break
 			}
-			if e.IsDir() {
+
+			isSymlink := e.Type()&os.ModeSymlink != 0
+			var symlinkTargetInfo os.FileInfo
+			if isSymlink {
+				targetPath := filepath.Join(path, e.Name())
+				targetInfo, statErr := os.Stat(targetPath)
+				if statErr != nil {
+					// Broken symlink or inaccessible target — skip
+					continue
+				}
+				if targetInfo.IsDir() {
+					// Symlink pointing to a directory — skip (not a file)
+					continue
+				}
+				symlinkTargetInfo = targetInfo
+			} else if e.IsDir() {
+				// Regular directory — skip
 				continue
 			}
 
@@ -75,19 +92,24 @@ func scanDir(ctx context.Context, path string, maxFiles, maxStatFiles int) ScanR
 			}
 			count++
 
-			// Stat cap: keep counting files but skip lstat calls once exhausted.
+			// Stat cap: keep counting files but skip stat calls once exhausted.
 			// Timestamps will reflect only the first maxStatFiles entries.
 			if maxStatFiles > 0 && statsDone >= maxStatFiles {
 				truncated = true
 				continue // don't break — we still want the accurate count
 			}
 
-			info, statErr := e.Info()
-			if statErr != nil {
-				continue
+			var mt int64
+			if isSymlink {
+				mt = symlinkTargetInfo.ModTime().Unix()
+			} else {
+				info, statErr := e.Info()
+				if statErr != nil {
+					continue
+				}
+				mt = info.ModTime().Unix()
 			}
 			statsDone++
-			mt := info.ModTime().Unix()
 			if mt < oldest {
 				oldest = mt
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -54,6 +55,9 @@ func (e *Exporter) ValidateTargets() {
 			msg += fmt.Sprintf(", watching %d explicit dirs", len(t.Dirs))
 		case t.Pattern != "":
 			msg += fmt.Sprintf(", auto-discover pattern %q up to depth %d", t.Pattern, t.MaxDepth)
+			if len(t.Include) > 0 {
+				msg += fmt.Sprintf(" (include: %s)", strings.Join(t.Include, ", "))
+			}
 		default:
 			msg += fmt.Sprintf(", auto-discover up to depth %d", t.MaxDepth)
 		}
