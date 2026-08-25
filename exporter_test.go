@@ -18,7 +18,7 @@ import (
 func TestLoadConfig_RequiredMissing(t *testing.T) {
 	t.Setenv("BASE_PATH", "")
 	t.Setenv("RELOAD_SECRET", "")
-	if _, err := LoadConfig(); err == nil {
+	if _, err := LoadConfig(nil); err == nil {
 		t.Fatal("expected error for missing BASE_PATH")
 	}
 }
@@ -26,24 +26,28 @@ func TestLoadConfig_RequiredMissing(t *testing.T) {
 func TestLoadConfig_Defaults(t *testing.T) {
 	t.Setenv("BASE_PATH", "/tmp")
 	t.Setenv("RELOAD_SECRET", "secret")
-	cfg, err := LoadConfig()
+	cfg, err := LoadConfig(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MaxDepth != 3 {
-		t.Errorf("MaxDepth: got %d want 3", cfg.MaxDepth)
+	if len(cfg.Targets) == 0 || cfg.Targets[0].MaxDepth != 1 {
+		t.Errorf("fallback target MaxDepth: got %d want 1", cfg.Targets[0].MaxDepth)
 	}
 	if cfg.ScanWorkers != 2 {
 		t.Errorf("ScanWorkers: got %d want 2", cfg.ScanWorkers)
 	}
 }
 
-func TestLoadConfig_InvalidMaxDepth(t *testing.T) {
+func TestLoadConfig_InvalidMaxDepthFallsBack(t *testing.T) {
 	t.Setenv("BASE_PATH", "/tmp")
 	t.Setenv("RELOAD_SECRET", "secret")
 	t.Setenv("MAX_DEPTH", "0")
-	if _, err := LoadConfig(); err == nil {
-		t.Fatal("expected error for MAX_DEPTH=0")
+	cfg, err := LoadConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Targets[0].MaxDepth != 1 {
+		t.Errorf("MaxDepth: got %d want 1 (zero env falls back to default)", cfg.Targets[0].MaxDepth)
 	}
 }
 
@@ -109,7 +113,7 @@ func TestDiscoverDirectories_Depth1(t *testing.T) {
 	os.MkdirAll(filepath.Join(base, "orders"), 0755)
 	os.MkdirAll(filepath.Join(base, "payments"), 0755)
 
-	entries, err := discoverDirectories(base, 1)
+	entries, err := discoverDirectories(base, base, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,11 +127,109 @@ func TestDiscoverDirectories_Depth1(t *testing.T) {
 	}
 }
 
+func TestDiscoverDirectories_PatternFilter(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	// Create a mix of directories; only those matching */nodes/*/input should be watched.
+	paths := []string{
+		"Nokia/nodes/Enc_LIMVNO_1/input",
+		"Nokia/nodes/Enc_LIMVNO_2/input",
+		"Nokia/nodes/Enc_LIMVNO_1/output", // should be ignored
+		"Nokia/buffer",                    // should be ignored
+		"Ericsson/nodes/Node_A/input",
+	}
+	for _, p := range paths {
+		os.MkdirAll(filepath.Join(streamsBase, p), 0755)
+	}
+
+	entries, err := discoverDirectories(streamsBase, streamsBase, 4, "*/nodes/*/input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries want 3:\n%+v", len(entries), entries)
+	}
+	for _, e := range entries {
+		if !strings.Contains(e.AbsPath, "input") {
+			t.Errorf("unexpected watch path %q", e.AbsPath)
+		}
+	}
+}
+
+func TestDiscoverDirectories_SymlinkToDir(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+
+	// Create a real directory outside the base to serve as the symlink target.
+	target := filepath.Join(base, "real_target")
+	os.MkdirAll(filepath.Join(target, "data"), 0755)
+	os.WriteFile(filepath.Join(target, "data", "file.txt"), []byte("x"), 0644)
+
+	// Create the tree structure with symlinks inside input/.
+	os.MkdirAll(filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input"), 0755)
+	os.Symlink(target, filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input", "STREAM_A"))
+
+	// Pattern: */nodes/*/input/* should match the symlink target.
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries want 1 (symlink-to-dir should be included):\n%+v", len(entries), entries)
+	}
+	if entries[0].Labels.Stream != "Nokia" {
+		t.Errorf("Stream=%q want Nokia", entries[0].Labels.Stream)
+	}
+	if entries[0].Labels.Type != "BLN_1/STREAM_A" {
+		t.Errorf("Type=%q want BLN_1/STREAM_A", entries[0].Labels.Type)
+	}
+}
+
+func TestDiscoverDirectories_DynamicTypeFromPattern(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	os.MkdirAll(filepath.Join(streamsBase, "Back_Dump", "nodes", "Back_Dump", "input", "COLLECTED_0_1020"), 0755)
+
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries want 1:\n%+v", len(entries), entries)
+	}
+	if entries[0].Labels.Stream != "Back_Dump" {
+		t.Errorf("Stream=%q want Back_Dump", entries[0].Labels.Stream)
+	}
+	if entries[0].Labels.Type != "Back_Dump/COLLECTED_0_1020" {
+		t.Errorf("Type=%q want Back_Dump/COLLECTED_0_1020", entries[0].Labels.Type)
+	}
+}
+
+func TestDiscoverDirectories_SymlinkToFileIgnored(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+
+	// Create a regular file to symlink to (not a directory).
+	target := filepath.Join(base, "somefile.txt")
+	os.WriteFile(target, []byte("x"), 0644)
+
+	os.MkdirAll(filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input"), 0755)
+	os.Symlink(target, filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input", "FILE_LINK"))
+
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("got %d entries want 0 (symlink-to-file should be ignored):\n%+v", len(entries), entries)
+	}
+}
+
 func TestDiscoverDirectories_Depth2Labels(t *testing.T) {
 	base := t.TempDir()
 	os.MkdirAll(filepath.Join(base, "orders", "buffer"), 0755)
 
-	entries, err := discoverDirectories(base, 2)
+	entries, err := discoverDirectories(base, base, 2, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,8 +397,7 @@ func TestScanAll_LogsScanComplete(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	cfg := &Config{
-		BasePath:       base,
-		MaxDepth:       1,
+		Targets:        []Target{{Base: base, MaxDepth: 1}},
 		ScanWorkers:    1,
 		ScanTimeout:    10 * time.Second,
 		MaxFilesPerDir: 0,
@@ -325,8 +426,7 @@ func TestScanAll_LogsTruncation(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	cfg := &Config{
-		BasePath:       base,
-		MaxDepth:       1,
+		Targets:        []Target{{Base: base, MaxDepth: 1}},
 		ScanWorkers:    1,
 		ScanTimeout:    10 * time.Second,
 		MaxFilesPerDir: 2, // cap at 2 out of 5 — must trigger truncation warning
@@ -355,8 +455,7 @@ func TestScanAll_MetricsTruncatedAfterCap(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
 
 	cfg := &Config{
-		BasePath:       base,
-		MaxDepth:       1,
+		Targets:        []Target{{Base: base, MaxDepth: 1}},
 		ScanWorkers:    1,
 		ScanTimeout:    10 * time.Second,
 		MaxFilesPerDir: 3,
@@ -398,8 +497,7 @@ func TestScanAll_MaxStatFilesCountsAllButStatsLimited(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
 
 	cfg := &Config{
-		BasePath:     base,
-		MaxDepth:     1,
+		Targets:      []Target{{Base: base, MaxDepth: 1}},
 		ScanWorkers:  1,
 		ScanTimeout:  10 * time.Second,
 		MaxStatFiles: 3, // stat only 3 of the 10 files

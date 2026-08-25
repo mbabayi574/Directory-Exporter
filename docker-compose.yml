@@ -40,13 +40,12 @@ services:
 
     volumes:
       # Config file — required. Points to your targets.yml on the host.
-      - ${CONFIG_FILE_HOST:-./targets.yml}:/config/targets.yml:ro
-
+      - ${CONFIG_FILE_HOST:-./targets.yml}:/config/targets.yml:ro,Z 
       # Data mounts — add one line per base path declared in targets.yml.
       # Format: <host_path>:<container_path>:ro
       # Example: - /mnt/nas/streams:/streams:ro
       # Current deployment:
-      - ${DATA_PATH_1:-/home/javad/streams}:/streams:ro
+      - ${DATA_PATH_1:-/home/javad/streams}:/streams:ro,Z
 
     deploy:
       resources:

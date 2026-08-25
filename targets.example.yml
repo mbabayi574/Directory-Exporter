@@ -30,6 +30,8 @@ max_files_per_dir:  0
 # Each target is a base path (the Docker volume mount point) plus either:
 #   dirs: [list]   — explicit subdirectories to watch (no filesystem walk)
 #   max_depth: N   — auto-discover all subdirs up to N levels deep
+#   pattern: glob  — auto-discover only subdirs matching the glob pattern (use * for one segment)
+#   label: string  — override the "base" label in metrics (default: use base path as-is)
 #
 # IMPORTANT: base paths must match the container-side mount paths in docker-compose.yml.
 
@@ -42,6 +44,13 @@ targets:
       - buffer
       - discarded
       - rejected
+
+  # Example 2 — label override (use a short name in metrics instead of the full path)
+  # - base: /home/user/data/streams
+  #   label: /streams
+  #   dirs:
+  #     - buffer
+  #     - rejected
 
   # Example 2 — deeper explicit path (stream=logs, type=nginx)
   # - base: /streams
@@ -60,3 +69,10 @@ targets:
   #   dirs:
   #     - 2024
   #     - 2025
+
+  # Example 5 — pattern-based auto-discovery
+  # Watches only directories matching the glob pattern relative to base.
+  # A * matches one path segment. With base: /streams, this watches every
+  # streams/<stream>/nodes/<node>/input directory and ignores everything else.
+  # - base: /streams
+  #   pattern: "*/nodes/*/input"

@@ -49,9 +49,12 @@ func (e *Exporter) ValidateTargets() {
 			continue
 		}
 		msg := fmt.Sprintf("base %q OK", t.Base)
-		if len(t.Dirs) > 0 {
+		switch {
+		case len(t.Dirs) > 0:
 			msg += fmt.Sprintf(", watching %d explicit dirs", len(t.Dirs))
-		} else {
+		case t.Pattern != "":
+			msg += fmt.Sprintf(", auto-discover pattern %q up to depth %d", t.Pattern, t.MaxDepth)
+		default:
 			msg += fmt.Sprintf(", auto-discover up to depth %d", t.MaxDepth)
 		}
 		e.log.Info("target validated", "detail", msg)

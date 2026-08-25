@@ -48,6 +48,7 @@ func (wl *WatchList) Len() int {
 // For each target:
 //   - Dirs non-empty → use exactly those subdirs (relative to Base), no filesystem walk.
 //   - Dirs empty     → auto-discover subdirectories up to MaxDepth via WalkDir.
+//     If Pattern is set, only matching directories are kept.
 func discoverTargets(targets []Target) ([]WatchEntry, error) {
 	var all []WatchEntry
 	var firstErr error
@@ -63,20 +64,33 @@ func discoverTargets(targets []Target) ([]WatchEntry, error) {
 
 func discoverTarget(t Target) ([]WatchEntry, error) {
 	base := filepath.Clean(t.Base)
+	label := t.Label
+	if label == "" {
+		label = base
+	}
 	if len(t.Dirs) > 0 {
-		return resolveExplicitDirs(base, t.Dirs)
+		return resolveExplicitDirs(base, label, t.Dirs)
+	}
+	if t.Pattern != "" {
+		if _, err := filepath.Match(t.Pattern, "test"); err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %w", t.Pattern, err)
+		}
 	}
 	maxDepth := t.MaxDepth
 	if maxDepth == 0 {
-		maxDepth = 1
+		if t.Pattern != "" {
+			maxDepth = len(strings.Split(t.Pattern, string(os.PathSeparator)))
+		} else {
+			maxDepth = 1
+		}
 	}
-	return discoverDirectories(base, maxDepth)
+	return discoverDirectories(base, label, maxDepth, t.Pattern)
 }
 
 // resolveExplicitDirs turns a list of relative dir paths into WatchEntries
 // without touching the filesystem. Missing directories are caught at scan time
 // via scrape_success=0.
-func resolveExplicitDirs(base string, dirs []string) ([]WatchEntry, error) {
+func resolveExplicitDirs(base, label string, dirs []string) ([]WatchEntry, error) {
 	var entries []WatchEntry
 	seen := make(map[string]bool, len(dirs))
 	for _, d := range dirs {
@@ -89,7 +103,7 @@ func resolveExplicitDirs(base string, dirs []string) ([]WatchEntry, error) {
 		absPath := filepath.Join(base, rel)
 		parts := strings.Split(rel, string(os.PathSeparator))
 
-		labels := DirLabels{Base: base}
+		labels := DirLabels{Base: label}
 		switch len(parts) {
 		case 1:
 			labels.Stream = parts[0]
@@ -141,12 +155,15 @@ func validateTargets(targets []Target) error {
 // discoverDirectories walks basePath up to maxDepth and returns one WatchEntry
 // per subdirectory. This is used for auto-discovery when Dirs is not specified.
 //
+// If pattern is non-empty, only directories whose relative path matches the glob
+// pattern are added to the watch list. A * in the pattern matches one path segment.
+//
 // Label derivation:
 //
 //	depth 1: stream=<dir>,        type=""
 //	depth 2: stream=<dir>,        type=<subdir>
 //	depth N: stream=<first-part>, type=<rest joined with "/">
-func discoverDirectories(basePath string, maxDepth int) ([]WatchEntry, error) {
+func discoverDirectories(basePath, label string, maxDepth int, pattern string) ([]WatchEntry, error) {
 	basePath = filepath.Clean(basePath)
 	var entries []WatchEntry
 	var firstErr error
@@ -158,7 +175,20 @@ func discoverDirectories(basePath string, maxDepth int) ([]WatchEntry, error) {
 			}
 			return nil
 		}
-		if path == basePath || !d.IsDir() {
+		if path == basePath {
+			return nil
+		}
+
+		// Check if this is a directory or a symlink pointing to a directory.
+		// filepath.WalkDir does not follow symlinks, so d.IsDir() returns
+		// false for symlink entries even when the target is a directory.
+		isDir := d.IsDir()
+		if !isDir && d.Type()&os.ModeSymlink != 0 {
+			if info, statErr := os.Stat(path); statErr == nil {
+				isDir = info.IsDir()
+			}
+		}
+		if !isDir {
 			return nil
 		}
 
@@ -174,13 +204,38 @@ func discoverDirectories(basePath string, maxDepth int) ([]WatchEntry, error) {
 			return filepath.SkipDir
 		}
 
-		labels := DirLabels{Base: basePath}
-		switch {
-		case depth == 1:
-			labels.Stream = parts[0]
-		default:
-			labels.Stream = parts[0]
-			labels.Type = strings.Join(parts[1:], "/")
+		if pattern != "" {
+			matched, matchErr := filepath.Match(pattern, rel)
+			if matchErr != nil {
+				if firstErr == nil {
+					firstErr = matchErr
+				}
+				return nil
+			}
+			if !matched {
+				return nil
+			}
+		}
+
+		labels := DirLabels{Base: label}
+		labels.Stream = parts[0]
+		if depth > 1 {
+			if pattern != "" {
+				patParts := strings.Split(filepath.ToSlash(pattern), "/")
+				if len(patParts) == len(parts) {
+					var typeParts []string
+					for i := 1; i < len(parts); i++ {
+						if strings.ContainsAny(patParts[i], "*?[") {
+							typeParts = append(typeParts, parts[i])
+						}
+					}
+					labels.Type = strings.Join(typeParts, "/")
+				} else {
+					labels.Type = strings.Join(parts[1:], "/")
+				}
+			} else {
+				labels.Type = strings.Join(parts[1:], "/")
+			}
 		}
 
 		entries = append(entries, WatchEntry{AbsPath: path, Labels: labels})

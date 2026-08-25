@@ -1,13 +1,13 @@
-# Monitoring-stack — full Prometheus + Grafana
+# Monitoring Server — Prometheus + Grafana
 #
-# Standalone usage:
-#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d --build
+# Runs on a separate server to scrape remote exporters.
+# Usage:
+#   1. Edit prometheus.yml — set your exporter IP(s)
+#   2. docker compose up -d
 #
-# This overlay adds Prometheus and Grafana with auto-provisioned
-# dashboard and datasource. The exporter joins the shared "monitoring" network.
-
-networks:
-  monitoring:
+# Access:
+#   Prometheus: http://<this-server>:9090
+#   Grafana:     http://<this-server>:3000  (admin/admin)
 
 services:
   prometheus:
@@ -15,12 +15,10 @@ services:
     container_name: prometheus
     restart: unless-stopped
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
       - prometheus_data:/prometheus
     ports:
-      - "127.0.0.1:9090:9090"
-    networks:
-      - monitoring
+      - "9090:9090"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -33,24 +31,18 @@ services:
     container_name: grafana
     restart: unless-stopped
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro,z
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro,z
       - grafana_data:/var/lib/grafana
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
-    networks:
-      - monitoring
+      GF_PLUGINS_AUTO_UPDATE_ENABLED: "false"
     depends_on:
       - prometheus
-
-  exporter:
-    networks:
-      - default
-      - monitoring
 
 volumes:
   prometheus_data:
