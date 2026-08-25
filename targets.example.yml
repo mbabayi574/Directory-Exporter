@@ -76,3 +76,10 @@ targets:
   # streams/<stream>/nodes/<node>/input directory and ignores everything else.
   # - base: /streams
   #   pattern: "*/nodes/*/input"
+
+  # Example 6 — pattern with #include filter
+  # Uses #include placeholder to match only specific directories listed in include.
+  # - base: /streams
+  #   pattern: "*/nodes/*/#include/*"
+  #   include: ["input", "output", "discarded", "rejected"]
+

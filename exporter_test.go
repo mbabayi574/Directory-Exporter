@@ -51,6 +51,44 @@ func TestLoadConfig_InvalidMaxDepthFallsBack(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_WithInclude(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "targets.yml")
+	yamlContent := `
+targets:
+  - base: /streams
+    label: /streams
+    pattern: "*/nodes/*/#include/*"
+    include: ["input", "output", "discarded", "rejected"]
+`
+	if err := os.WriteFile(configFile, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CONFIG_FILE", configFile)
+	t.Setenv("RELOAD_SECRET", "secret")
+
+	cfg, err := LoadConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.Targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(cfg.Targets))
+	}
+
+	target := cfg.Targets[0]
+	if target.Pattern != "*/nodes/*/#include/*" {
+		t.Errorf("Pattern: got %q want */nodes/*/#include/*", target.Pattern)
+	}
+	if len(target.Include) != 4 {
+		t.Fatalf("expected 4 include items, got %d", len(target.Include))
+	}
+	if target.Include[0] != "input" || target.Include[3] != "rejected" {
+		t.Errorf("unexpected include items: %+v", target.Include)
+	}
+}
+
 // ── scanner ───────────────────────────────────────────────────────────────────
 
 func TestScanDir_Empty(t *testing.T) {
@@ -188,7 +226,7 @@ func TestDiscoverDirectories_Depth1(t *testing.T) {
 	os.MkdirAll(filepath.Join(base, "orders"), 0755)
 	os.MkdirAll(filepath.Join(base, "payments"), 0755)
 
-	entries, err := discoverDirectories(base, base, 1, "")
+	entries, err := discoverDirectories(base, base, 1, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +255,7 @@ func TestDiscoverDirectories_PatternFilter(t *testing.T) {
 		os.MkdirAll(filepath.Join(streamsBase, p), 0755)
 	}
 
-	entries, err := discoverDirectories(streamsBase, streamsBase, 4, "*/nodes/*/input")
+	entries, err := discoverDirectories(streamsBase, streamsBase, 4, "*/nodes/*/input", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +283,7 @@ func TestDiscoverDirectories_SymlinkToDir(t *testing.T) {
 	os.Symlink(target, filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input", "STREAM_A"))
 
 	// Pattern: */nodes/*/input/* should match the symlink target.
-	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +303,7 @@ func TestDiscoverDirectories_DynamicTypeFromPattern(t *testing.T) {
 	streamsBase := filepath.Join(base, "streams")
 	os.MkdirAll(filepath.Join(streamsBase, "Back_Dump", "nodes", "Back_Dump", "input", "COLLECTED_0_1020"), 0755)
 
-	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +329,7 @@ func TestDiscoverDirectories_SymlinkToFileIgnored(t *testing.T) {
 	os.MkdirAll(filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input"), 0755)
 	os.Symlink(target, filepath.Join(streamsBase, "Nokia", "nodes", "BLN_1", "input", "FILE_LINK"))
 
-	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/input/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +342,7 @@ func TestDiscoverDirectories_Depth2Labels(t *testing.T) {
 	base := t.TempDir()
 	os.MkdirAll(filepath.Join(base, "orders", "buffer"), 0755)
 
-	entries, err := discoverDirectories(base, base, 2, "")
+	entries, err := discoverDirectories(base, base, 2, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +395,7 @@ func TestDiscoverDirectories_IntermediateSymlinks(t *testing.T) {
 	}
 
 	// Pattern: */nodes/*/* (depth 4)
-	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +445,7 @@ func TestDiscoverDirectories_DeepSymlinkTraversal(t *testing.T) {
 	os.MkdirAll(filepath.Join(nodeDir, "input", "queue_in"), 0755)
 
 	// Pattern: */nodes/*/*/* (depth 5)
-	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/*/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/*/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +493,7 @@ func TestDiscoverDirectories_SymlinkNodeDir(t *testing.T) {
 	}
 
 	// Pattern: */nodes/*/* (depth 4)
-	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +529,7 @@ func TestDiscoverDirectories_SymlinkCycleIgnored(t *testing.T) {
 	}
 
 	// Should not hang or loop infinitely
-	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +558,7 @@ func TestDiscoverDirectories_BrokenSymlinkIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*")
+	entries, err := discoverDirectories(streamsBase, "/streams", 4, "*/nodes/*/*", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,6 +568,112 @@ func TestDiscoverDirectories_BrokenSymlinkIgnored(t *testing.T) {
 	}
 	if entries[0].Labels.Type != "Enc_CPM/input" {
 		t.Errorf("Type=%q want Enc_CPM/input", entries[0].Labels.Type)
+	}
+}
+
+func TestDiscoverDirectories_PatternWithInclude(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	extBase := filepath.Join(base, "external_install")
+
+	nodeDir := filepath.Join(streamsBase, "Nokia", "nodes", "Enc_CPM")
+	os.MkdirAll(nodeDir, 0755)
+
+	// Create real directories
+	os.MkdirAll(filepath.Join(nodeDir, "input", "stream_in"), 0755)
+	os.MkdirAll(filepath.Join(nodeDir, "output", "stream_out"), 0755)
+
+	// Create symlinked directories
+	allSymlinks := []string{
+		"audit", "bin", "control", "discarded", "log",
+		"rejected", "reprocess", "status", "storage", "temp",
+	}
+	for _, name := range allSymlinks {
+		targetDir := filepath.Join(extBase, name)
+		os.MkdirAll(filepath.Join(targetDir, "sub_queue"), 0755)
+		if err := os.Symlink(targetDir, filepath.Join(nodeDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	include := []string{"input", "output", "discarded", "rejected"}
+	entries, err := discoverDirectories(streamsBase, "/streams", 5, "*/nodes/*/#include/*", include)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only input, output, discarded, rejected subqueues should be discovered (4 total)
+	if len(entries) != 4 {
+		t.Fatalf("got %d entries want 4:\n%+v", len(entries), entries)
+	}
+
+	foundTypes := make(map[string]bool)
+	for _, e := range entries {
+		if e.Labels.Stream != "Nokia" {
+			t.Errorf("expected Stream=Nokia, got %q", e.Labels.Stream)
+		}
+		foundTypes[e.Labels.Type] = true
+	}
+
+	expectedTypes := []string{
+		"Enc_CPM/input/stream_in",
+		"Enc_CPM/output/stream_out",
+		"Enc_CPM/discarded/sub_queue",
+		"Enc_CPM/rejected/sub_queue",
+	}
+	for _, exp := range expectedTypes {
+		if !foundTypes[exp] {
+			t.Errorf("missing expected type label %q, found: %+v", exp, foundTypes)
+		}
+	}
+}
+
+func TestDiscoverDirectories_PatternIncludeDirect(t *testing.T) {
+	base := t.TempDir()
+	streamsBase := filepath.Join(base, "streams")
+	extBase := filepath.Join(base, "external_install")
+
+	nodeDir := filepath.Join(streamsBase, "Nokia", "nodes", "Enc_CPM")
+	os.MkdirAll(nodeDir, 0755)
+
+	os.MkdirAll(filepath.Join(nodeDir, "input"), 0755)
+	os.MkdirAll(filepath.Join(nodeDir, "output"), 0755)
+
+	for _, name := range []string{"audit", "bin", "discarded", "rejected", "temp"} {
+		targetDir := filepath.Join(extBase, name)
+		os.MkdirAll(targetDir, 0755)
+		if err := os.Symlink(targetDir, filepath.Join(nodeDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	targets := []Target{
+		{
+			Base:    streamsBase,
+			Label:   "/streams",
+			Pattern: "*/nodes/*/#include",
+			Include: []string{"input", "output", "discarded", "rejected"},
+		},
+	}
+
+	entries, err := discoverTargets(targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 4 {
+		t.Fatalf("got %d entries want 4:\n%+v", len(entries), entries)
+	}
+
+	foundTypes := make(map[string]bool)
+	for _, e := range entries {
+		foundTypes[e.Labels.Type] = true
+	}
+
+	for _, exp := range []string{"Enc_CPM/input", "Enc_CPM/output", "Enc_CPM/discarded", "Enc_CPM/rejected"} {
+		if !foundTypes[exp] {
+			t.Errorf("missing expected type %q in %+v", exp, foundTypes)
+		}
 	}
 }
 

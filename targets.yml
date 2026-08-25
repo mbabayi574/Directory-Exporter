@@ -10,4 +10,5 @@ max_files_per_dir:  0
 targets:
   - base: /home/bobby/Documents/DirectoryExporter/streams
     label: /streams
-    pattern: "*/nodes/*/*/*"
+    pattern: "*/nodes/*/#include/*"
+    include: [ "input" , "output" , "discarded" , "rejected" ]

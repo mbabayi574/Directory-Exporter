@@ -71,7 +71,8 @@ func discoverTarget(t Target) ([]WatchEntry, error) {
 		return resolveExplicitDirs(base, label, t.Dirs)
 	}
 	if t.Pattern != "" {
-		if _, err := filepath.Match(t.Pattern, "test"); err != nil {
+		testPat := strings.ReplaceAll(t.Pattern, "#include", "dummy")
+		if _, err := filepath.Match(testPat, "test"); err != nil {
 			return nil, fmt.Errorf("invalid pattern %q: %w", t.Pattern, err)
 		}
 	}
@@ -88,7 +89,7 @@ func discoverTarget(t Target) ([]WatchEntry, error) {
 			maxDepth = 1
 		}
 	}
-	return discoverDirectories(base, label, maxDepth, t.Pattern)
+	return discoverDirectories(base, label, maxDepth, t.Pattern, t.Include)
 }
 
 // resolveExplicitDirs turns a list of relative dir paths into WatchEntries
@@ -156,6 +157,78 @@ func validateTargets(targets []Target) error {
 	return fmt.Errorf("target validation errors:\n%s", strings.Join(errs, "\n"))
 }
 
+// matchPattern checks if a relative directory path matches the pattern,
+// expanding any #include segment using the provided include list.
+func matchPattern(pattern, relPath string, include []string) (bool, error) {
+	if pattern == "" {
+		return true, nil
+	}
+	patParts := strings.Split(strings.Trim(filepath.ToSlash(pattern), "/"), "/")
+	parts := strings.Split(strings.Trim(filepath.ToSlash(relPath), "/"), "/")
+	if len(patParts) != len(parts) {
+		return false, nil
+	}
+
+	for i := 0; i < len(patParts); i++ {
+		if patParts[i] == "#include" {
+			if !matchesInclude(parts[i], include) {
+				return false, nil
+			}
+		} else {
+			matched, err := filepath.Match(patParts[i], parts[i])
+			if err != nil {
+				return false, err
+			}
+			if !matched {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+// matchPatternPrefix checks if the current relative path matches the prefix of pattern.
+// This allows pruning branches early during directory discovery.
+func matchPatternPrefix(pattern, relPath string, include []string) bool {
+	if pattern == "" {
+		return true
+	}
+	patParts := strings.Split(strings.Trim(filepath.ToSlash(pattern), "/"), "/")
+	parts := strings.Split(strings.Trim(filepath.ToSlash(relPath), "/"), "/")
+	if len(parts) > len(patParts) {
+		return false
+	}
+
+	for i := 0; i < len(parts); i++ {
+		if patParts[i] == "#include" {
+			if !matchesInclude(parts[i], include) {
+				return false
+			}
+		} else {
+			matched, err := filepath.Match(patParts[i], parts[i])
+			if err != nil || !matched {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func matchesInclude(name string, include []string) bool {
+	if len(include) == 0 {
+		return false
+	}
+	for _, inc := range include {
+		if name == inc {
+			return true
+		}
+		if matched, _ := filepath.Match(inc, name); matched {
+			return true
+		}
+	}
+	return false
+}
+
 // discoverDirectories walks basePath up to maxDepth and returns one WatchEntry
 // per subdirectory. This is used for auto-discovery when Dirs is not specified.
 //
@@ -164,13 +237,14 @@ func validateTargets(targets []Target) error {
 //
 // If pattern is non-empty, only directories whose relative path matches the glob
 // pattern are added to the watch list. A * in the pattern matches one path segment.
+// The pattern may include #include to match only directories listed in the include slice.
 //
 // Label derivation:
 //
 //	depth 1: stream=<dir>,        type=""
 //	depth 2: stream=<dir>,        type=<subdir>
 //	depth N: stream=<first-part>, type=<rest joined with "/">
-func discoverDirectories(basePath, label string, maxDepth int, pattern string) ([]WatchEntry, error) {
+func discoverDirectories(basePath, label string, maxDepth int, pattern string, include []string) ([]WatchEntry, error) {
 	basePath = filepath.Clean(basePath)
 	var entries []WatchEntry
 	var firstErr error
@@ -198,16 +272,12 @@ func discoverDirectories(basePath, label string, maxDepth int, pattern string) (
 		}
 
 		if depth >= 1 {
-			matched := true
-			if pattern != "" {
-				var matchErr error
-				matched, matchErr = filepath.Match(pattern, relPath)
-				if matchErr != nil {
-					if firstErr == nil {
-						firstErr = matchErr
-					}
-					return
+			matched, matchErr := matchPattern(pattern, relPath, include)
+			if matchErr != nil {
+				if firstErr == nil {
+					firstErr = matchErr
 				}
+				return
 			}
 
 			if matched {
@@ -220,7 +290,7 @@ func discoverDirectories(basePath, label string, maxDepth int, pattern string) (
 						if len(patParts) == len(parts) {
 							var typeParts []string
 							for i := 1; i < len(parts); i++ {
-								if strings.ContainsAny(patParts[i], "*?[") {
+								if strings.ContainsAny(patParts[i], "*?[") || patParts[i] == "#include" {
 									typeParts = append(typeParts, parts[i])
 								}
 							}
@@ -261,6 +331,11 @@ func discoverDirectories(basePath, label string, maxDepth int, pattern string) (
 				}
 
 				if !isDir {
+					continue
+				}
+
+				// Early branch pruning
+				if !matchPatternPrefix(pattern, childRel, include) {
 					continue
 				}
 

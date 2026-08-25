@@ -198,6 +198,12 @@ targets:
   - base: /streams
     pattern: "*/nodes/*/input"
 
+  # Pattern with #include filter — watches only specific directories listed in include
+  - base: /streams
+    pattern: "*/nodes/*/#include/*"
+    include: ["input", "output", "discarded", "rejected"]
+
+
   # Multiple base paths on different mounts
   - base: /mnt/nas/archive
     dirs:

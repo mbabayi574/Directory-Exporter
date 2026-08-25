@@ -25,6 +25,7 @@ type Target struct {
 	Dirs     []string `yaml:"dirs"`
 	MaxDepth int      `yaml:"max_depth"`
 	Pattern  string   `yaml:"pattern"`
+	Include  []string `yaml:"include"`
 }
 
 // fileConfig mirrors the YAML config file structure.
