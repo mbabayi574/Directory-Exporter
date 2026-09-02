@@ -8,7 +8,10 @@ max_stat_files:     5000
 max_files_per_dir:  0
 
 targets:
-  - base: /home/bobby/Documents/DirectoryExporter/streams
+  - base: /home/bobby/Documents/streams
     label: /streams
     pattern: "*/nodes/*/#include/*"
     include: [ "input" , "output" , "discarded" , "rejected" ]
+
+tracelog:
+  - dir: /home/bobby/Documents/EventLinkTraceLogs

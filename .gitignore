@@ -1,6 +1,5 @@
 ﻿# Secrets
 .env
-EventLinkTraceLogs
 
 # Compiled binary
 directory-exporter
