@@ -36,20 +36,20 @@ declare -r CRONTAB_TIME=60;
 #                                                                                                 #
 ###################################################
 # stream directory
-STDIR="/comptel/elink/installation/EventLink/base/status/streams";
+STDIR="/comptel/elink/install/EventLink/base/status/streams";
 
 # tracelog directory
-TRACEDIR="/comptel/elink/installation/EventLink/base/tracelog";
+TRACEDIR="/comptel/elink/install/EventLink/base/tracelog";
 
 # temp directory
-TEMP_DIR="/comptel/elink/script_logs/monitoring/";
+TEMP_DIR="/comptel/elink/install/EventLink/base/status/directory-exporter/monitoringlogs";
 
 declare -r RESULT_FILE=${TEMP_DIR}monitor.tmp;
 declare -r TOUCH_FILE=${TEMP_DIR}touch.tmp;
 
 declare -r HTML_FILE=${TEMP_DIR}monitor.html;
-declare -r WEB_SERVER_PATH="/comptel/elink/installation/tomcat-ccp/apache-tomcat-8.0.28/webapps/eventlink/";
-declare -r ARCHIVE_PATH="/comptel/elink/installation/tomcat-ccp/apache-tomcat-8.0.28/webapps/eventlink/monitor/archive/";
+declare -r WEB_SERVER_PATH="/comptel/elink/install/tomcat-ccp/apache-tomcat-8.0.39/webapps/eventlink/";
+declare -r ARCHIVE_PATH="/comptel/elink/install/tomcat-ccp/apache-tomcat-8.0.39/webapps/eventlink/monitor/archive/";
 
 
 TEMP_MID=${TEMP_DIR}temp_mid.tmp
