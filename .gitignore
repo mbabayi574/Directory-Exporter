@@ -1,5 +1,6 @@
 ﻿# Secrets
 .env
+EventLinkTraceLogs
 
 # Compiled binary
 directory-exporter
@@ -12,3 +13,5 @@ directory-exporter
 # OS
 .DS_Store
 Thumbs.db
+# Added by code-review-graph
+.code-review-graph/
