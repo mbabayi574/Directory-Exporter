@@ -32,13 +32,14 @@ type DirMetrics struct {
 // CacheSnapshot is an immutable, point-in-time copy of the cache state.
 // It is safe to read without holding any lock.
 type CacheSnapshot struct {
-	Entries        []DirMetrics
-	NodeActivities []NodeActivity
-	LastScanTime   time.Time
-	Ready          bool
-	ScanErrors     uint64
-	ReloadTotal    uint64
-	WatchedTotal   int32
+	Entries             []DirMetrics
+	NodeActivities      []NodeActivity
+	NodeStoppedStatuses []NodeStoppedStatus
+	LastScanTime        time.Time
+	Ready               bool
+	ScanErrors          uint64
+	ReloadTotal         uint64
+	WatchedTotal        int32
 }
 
 // Cache is the central, thread-safe metrics store.
@@ -49,10 +50,11 @@ type CacheSnapshot struct {
 // Counters (ScanErrors, ReloadTotal) use sync/atomic so scan workers can
 // increment them without contending on the entries mutex.
 type Cache struct {
-	mu             sync.RWMutex
-	entries        map[string]DirMetrics
-	nodeActivities map[string]NodeActivity
-	lastScanTime   time.Time
+	mu                sync.RWMutex
+	entries           map[string]DirMetrics
+	nodeActivities    map[string]NodeActivity
+	nodeStopped       map[string]NodeStoppedStatus
+	lastScanTime      time.Time
 
 	ready        atomic.Bool
 	scanErrors   atomic.Uint64
@@ -66,17 +68,19 @@ func NewCache() *Cache {
 	return &Cache{
 		entries:        make(map[string]DirMetrics),
 		nodeActivities: make(map[string]NodeActivity),
+		nodeStopped:    make(map[string]NodeStoppedStatus),
 	}
 }
 
-// SetBatch atomically swaps the entries and node activities maps, records the scan
-// timestamp, adds newErrors to the cumulative error counter, and marks
-// the cache as ready (flipping directory_cache_ready from 0 → 1 on the
-// first call).
-func (c *Cache) SetBatch(entries map[string]DirMetrics, activities map[string]NodeActivity, scanTime time.Time, newErrors uint64) {
+// SetBatch atomically swaps the entries, node activities, and stopped-status maps,
+// records the scan timestamp, adds newErrors to the cumulative error counter,
+// and marks the cache as ready (flipping directory_cache_ready from 0 → 1 on
+// the first call).
+func (c *Cache) SetBatch(entries map[string]DirMetrics, activities map[string]NodeActivity, stopped map[string]NodeStoppedStatus, scanTime time.Time, newErrors uint64) {
 	c.mu.Lock()
 	c.entries = entries
 	c.nodeActivities = activities
+	c.nodeStopped = stopped
 	c.lastScanTime = scanTime
 	c.mu.Unlock()
 
@@ -107,16 +111,21 @@ func (c *Cache) Snapshot() CacheSnapshot {
 	for _, v := range c.nodeActivities {
 		activities = append(activities, v)
 	}
+	stopped := make([]NodeStoppedStatus, 0, len(c.nodeStopped))
+	for _, v := range c.nodeStopped {
+		stopped = append(stopped, v)
+	}
 	scanTime := c.lastScanTime
 	c.mu.RUnlock()
 
 	return CacheSnapshot{
-		Entries:        entries,
-		NodeActivities: activities,
-		LastScanTime:   scanTime,
-		Ready:          c.ready.Load(),
-		ScanErrors:     c.scanErrors.Load(),
-		ReloadTotal:    c.reloadTotal.Load(),
-		WatchedTotal:   c.watchedTotal.Load(),
+		Entries:             entries,
+		NodeActivities:      activities,
+		NodeStoppedStatuses: stopped,
+		LastScanTime:        scanTime,
+		Ready:               c.ready.Load(),
+		ScanErrors:          c.scanErrors.Load(),
+		ReloadTotal:         c.reloadTotal.Load(),
+		WatchedTotal:        c.watchedTotal.Load(),
 	}
 }

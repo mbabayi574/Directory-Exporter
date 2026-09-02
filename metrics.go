@@ -232,6 +232,34 @@ func RenderMetrics(w io.Writer, snap CacheSnapshot) {
 			}
 		}
 	}
+
+	// ── Stopped Nodes Metric (heartbeat file check) ─────────────────────────
+	// Mirrors legacy shell logic:
+	//   if [ ! -f "${node}/control/1/heartbeat" ]; then STOPPED_INDEX=1; fi
+	// For every discovered stream node we check the heartbeat file
+	// ${nodeDir}/control/1/heartbeat. The metric is 1 when the file is missing
+	// (node stopped), 0 when present (node running).
+	if len(snap.NodeStoppedStatuses) > 0 {
+		sortedStopped := make([]NodeStoppedStatus, len(snap.NodeStoppedStatuses))
+		copy(sortedStopped, snap.NodeStoppedStatuses)
+		sort.Slice(sortedStopped, func(i, j int) bool {
+			ki := sortedStopped[i].Base + "/" + sortedStopped[i].Stream + "/" + sortedStopped[i].Node + "/" + sortedStopped[i].NodeType
+			kj := sortedStopped[j].Base + "/" + sortedStopped[j].Stream + "/" + sortedStopped[j].Node + "/" + sortedStopped[j].NodeType
+			return ki < kj
+		})
+
+		help(w, "directory_node_stopped",
+			"1 if the node is stopped (heartbeat file missing at control/1/heartbeat), 0 if running.")
+		typ(w, "directory_node_stopped", "gauge")
+		for _, st := range sortedStopped {
+			val := 0.0
+			if st.Stopped {
+				val = 1.0
+			}
+			fmt.Fprintf(w, "directory_node_stopped{base=%s,stream=%s,node=%s,type=%s} %g\n",
+				lv(st.Base), lv(st.Stream), lv(st.Node), lv(st.NodeType), val)
+		}
+	}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

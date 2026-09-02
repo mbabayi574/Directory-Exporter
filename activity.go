@@ -26,6 +26,17 @@ type NodeActivity struct {
 	Success               bool
 }
 
+// NodeStoppedStatus holds the heartbeat-based stopped state for a single stream node.
+// Stopped is true when the heartbeat file ${node}/control/1/heartbeat is missing,
+// mirroring the legacy shell check: [ ! -f "${node}/control/1/heartbeat" ] => STOPPED_INDEX=1.
+type NodeStoppedStatus struct {
+	Base     string
+	Stream   string
+	Node     string
+	NodeType string // "collector", "distributor", or empty
+	Stopped  bool   // true if heartbeat file is missing (node stopped)
+}
+
 // StreamNode represents a discovered node inside a stream directory.
 type StreamNode struct {
 	Base     string // target label or base path
@@ -346,6 +357,45 @@ func DiscoverStreamNodes(targets []Target) []StreamNode {
 	}
 
 	return nodes
+}
+
+// IsNodeStopped checks whether the heartbeat file ${nodeDir}/control/1/heartbeat exists.
+// It replicates the legacy shell test: [ ! -f "${node}/control/1/heartbeat" ].
+// Returns true (stopped = 1) if the heartbeat file is missing or is not a regular file.
+func IsNodeStopped(nodeDir string) bool {
+	heartbeatPath := filepath.Join(nodeDir, "control", "1", "heartbeat")
+	info, err := os.Stat(heartbeatPath)
+	if err != nil {
+		return true
+	}
+	return !info.Mode().IsRegular()
+}
+
+// ScanAllNodeStoppedStatuses checks every discovered node for heartbeat file presence.
+// For each node it sets Stopped=true when the heartbeat file is missing, otherwise false.
+// This mirrors the legacy STRAMES_DETAIL[$i, $STOPPED_INDEX]=1 assignment.
+func ScanAllNodeStoppedStatuses(nodes []StreamNode) map[string]NodeStoppedStatus {
+	results := make(map[string]NodeStoppedStatus, len(nodes))
+	for _, n := range nodes {
+		stopped := IsNodeStopped(n.NodeDir)
+		key := n.Base + "/" + n.Stream + "/" + n.Node
+		// Include NodeType in the key only if it would not collide; keep base/stream/node as primary key
+		// and store the full entry. Use same separator scheme as activities for consistency.
+		// To avoid collisions when two bases share stream/node names, the base prefix ensures uniqueness.
+		// For map key, include NodeType as suffix if present to preserve distinction (collector vs distributor
+		// naming collisions are unlikely, but keep it deterministic).
+		if n.NodeType != "" {
+			key = key + "/" + n.NodeType
+		}
+		results[key] = NodeStoppedStatus{
+			Base:     n.Base,
+			Stream:   n.Stream,
+			Node:     n.Node,
+			NodeType: n.NodeType,
+			Stopped:  stopped,
+		}
+	}
+	return results
 }
 
 // ScanAllNodeActivities scans all discovered nodes for collector and distributor activities.
