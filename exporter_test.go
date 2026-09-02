@@ -89,6 +89,39 @@ targets:
 	}
 }
 
+func TestLoadConfig_WithTracelogAndDelay(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "targets.yml")
+	yamlContent := `
+tracelog_dir: /var/log/tracelog
+min_delay: 5m
+trace_lookback_days: 14
+targets:
+  - base: /streams
+`
+	if err := os.WriteFile(configFile, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CONFIG_FILE", configFile)
+	t.Setenv("RELOAD_SECRET", "secret")
+
+	cfg, err := LoadConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.TracelogDir != "/var/log/tracelog" {
+		t.Errorf("TracelogDir: got %q want /var/log/tracelog", cfg.TracelogDir)
+	}
+	if cfg.MinDelay != 5*time.Minute {
+		t.Errorf("MinDelay: got %v want 5m", cfg.MinDelay)
+	}
+	if cfg.TraceLookbackDays != 14 {
+		t.Errorf("TraceLookbackDays: got %d want 14", cfg.TraceLookbackDays)
+	}
+}
+
 // ── scanner ───────────────────────────────────────────────────────────────────
 
 func TestScanDir_Empty(t *testing.T) {

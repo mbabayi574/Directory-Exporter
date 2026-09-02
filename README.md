@@ -82,6 +82,11 @@ All per-directory metrics carry `base`, `stream`, and `type` labels derived from
 | `directory_scrape_duration_seconds` | Gauge | Wall-clock time of the last scan for this directory |
 | `directory_scrape_success` | Gauge | `1` = readable, `0` = permission error or directory vanished |
 | `directory_scan_truncated` | Gauge | `1` if stat phase was capped by `max_stat_files`; timestamps are approximate |
+| `directory_collector_last_activity_timestamp_seconds` | Gauge | Unix timestamp of the last file processed by collector node |
+| `directory_collector_delay_seconds` | Gauge | Delay in seconds since last collected file (0 if <= `min_delay`) |
+| `directory_distributor_last_activity_timestamp_seconds` | Gauge | Unix timestamp of the last file processed by distributor node |
+| `directory_distributor_delay_seconds` | Gauge | Delay in seconds since last distributed file (0 if <= `min_delay`) |
+| `directory_node_last_file_info` | Gauge | Value `1` with label `filename` indicating the last processed file |
 
 ### Recommended Alert Rules
 
@@ -94,6 +99,16 @@ All per-directory metrics carry `base`, `stream`, and `type` labels derived from
 # Producer down — no new files
 - alert: DirectoryIngestHalted
   expr: time() - directory_newest_file_timestamp_seconds > 3600
+  for: 5m
+
+# Collector node delayed — no file collected in 30 minutes
+- alert: CollectorNodeDelayed
+  expr: directory_collector_delay_seconds > 1800
+  for: 5m
+
+# Distributor node delayed — no file distributed in 30 minutes
+- alert: DistributorNodeDelayed
+  expr: directory_distributor_delay_seconds > 1800
   for: 5m
 
 # Stuck file — oldest file hasn't moved in 2 hours
@@ -122,6 +137,7 @@ Exporter/
 ├── config.go         Config loading: defaults → YAML file → env vars
 ├── watchlist.go      Directory discovery (auto and explicit), thread-safe WatchList
 ├── scanner.go        Low-level dir scan: getdents counting + capped lstat timestamps
+├── activity.go       Collector & Distributor delay calculation, audit_info & trace logs
 ├── exporter.go       Scan loop, discovery loop, parallel worker pool
 ├── cache.go          Thread-safe in-memory metrics store (atomic counters, RWMutex)
 ├── metrics.go        Prometheus text format renderer (zero allocations on scrape path)

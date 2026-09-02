@@ -148,7 +148,9 @@ func (e *Exporter) ScanAll() {
 
 	watched := e.wl.Get()
 	if len(watched) == 0 {
-		e.cache.SetBatch(make(map[string]DirMetrics), time.Now(), 0)
+		nodes := DiscoverStreamNodes(e.cfg.Targets)
+		activities := ScanAllNodeActivities(context.Background(), nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, time.Now())
+		e.cache.SetBatch(make(map[string]DirMetrics), activities, time.Now(), 0)
 		e.log.Warn("watch list is empty — check your targets config and volume mounts")
 		return
 	}
@@ -161,6 +163,15 @@ func (e *Exporter) ScanAll() {
 	var resultsMu sync.Mutex
 	var errCount atomic.Uint64
 	var truncCount atomic.Uint64
+
+	var activities map[string]NodeActivity
+	var actWg sync.WaitGroup
+	actWg.Add(1)
+	go func() {
+		defer actWg.Done()
+		nodes := DiscoverStreamNodes(e.cfg.Targets)
+		activities = ScanAllNodeActivities(ctx, nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, time.Now())
+	}()
 
 	sem := make(chan struct{}, e.cfg.ScanWorkers)
 	var wg sync.WaitGroup
@@ -206,13 +217,14 @@ func (e *Exporter) ScanAll() {
 	}
 
 	wg.Wait()
+	actWg.Wait()
 
 	elapsed := time.Since(cycleStart)
 	timedOut := ctx.Err() != nil
 	errors := errCount.Load()
 	truncs := truncCount.Load()
 
-	e.cache.SetBatch(results, time.Now(), errors)
+	e.cache.SetBatch(results, activities, time.Now(), errors)
 
 	if timedOut {
 		e.log.Warn("scan cycle timed out — partial results written to cache",

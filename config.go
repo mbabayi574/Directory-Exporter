@@ -28,23 +28,35 @@ type Target struct {
 	Include  []string `yaml:"include"`
 }
 
+// TracelogConfig holds a directory path for trace logs.
+type TracelogConfig struct {
+	Dir string `yaml:"dir"`
+}
+
 // fileConfig mirrors the YAML config file structure.
 // All fields are optional; zero values mean "use default or env var".
 type fileConfig struct {
-	Targets           []Target `yaml:"targets"`
-	ListenAddr        string   `yaml:"listen_addr"`
-	ReloadSecret      string   `yaml:"reload_secret"`
-	ScanInterval      string   `yaml:"scan_interval"`
-	ScanWorkers       int      `yaml:"scan_workers"`
-	ScanTimeout       string   `yaml:"scan_timeout"`
-	DiscoveryInterval string   `yaml:"discovery_interval"`
-	MaxFilesPerDir    *int     `yaml:"max_files_per_dir"`
-	MaxStatFiles      *int     `yaml:"max_stat_files"`
+	Targets           []Target         `yaml:"targets"`
+	Tracelog          []TracelogConfig `yaml:"tracelog"`
+	TracelogDir       string           `yaml:"tracelog_dir"`
+	MinDelay          string           `yaml:"min_delay"`
+	TraceLookbackDays *int             `yaml:"trace_lookback_days"`
+	ListenAddr        string           `yaml:"listen_addr"`
+	ReloadSecret      string           `yaml:"reload_secret"`
+	ScanInterval      string           `yaml:"scan_interval"`
+	ScanWorkers       int              `yaml:"scan_workers"`
+	ScanTimeout       string           `yaml:"scan_timeout"`
+	DiscoveryInterval string           `yaml:"discovery_interval"`
+	MaxFilesPerDir    *int             `yaml:"max_files_per_dir"`
+	MaxStatFiles      *int             `yaml:"max_stat_files"`
 }
 
 // Config holds every runtime tunable for the exporter.
 type Config struct {
 	Targets           []Target
+	TracelogDir       string
+	MinDelay          time.Duration
+	TraceLookbackDays int
 	ScanInterval      time.Duration
 	ScanWorkers       int
 	ReloadSecret      string
@@ -73,6 +85,8 @@ func LoadConfig(log *slog.Logger) (*Config, error) {
 		ScanTimeout:       90 * time.Second,
 		MaxFilesPerDir:    0,
 		MaxStatFiles:      5000,
+		MinDelay:          600 * time.Second,
+		TraceLookbackDays: 7,
 	}
 
 	// Layer 2: YAML config file
@@ -179,6 +193,19 @@ func applyFileConfig(cfg *Config, fc *fileConfig) {
 	if fc.MaxStatFiles != nil {
 		cfg.MaxStatFiles = *fc.MaxStatFiles
 	}
+	if fc.TracelogDir != "" {
+		cfg.TracelogDir = fc.TracelogDir
+	} else if len(fc.Tracelog) > 0 && fc.Tracelog[0].Dir != "" {
+		cfg.TracelogDir = fc.Tracelog[0].Dir
+	}
+	if fc.MinDelay != "" {
+		if d, err := time.ParseDuration(fc.MinDelay); err == nil && d >= 0 {
+			cfg.MinDelay = d
+		}
+	}
+	if fc.TraceLookbackDays != nil && *fc.TraceLookbackDays >= 0 {
+		cfg.TraceLookbackDays = *fc.TraceLookbackDays
+	}
 }
 
 func applyEnvOverrides(cfg *Config) {
@@ -216,6 +243,19 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("MAX_STAT_FILES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			cfg.MaxStatFiles = n
+		}
+	}
+	if v := os.Getenv("TRACELOG_DIR"); v != "" {
+		cfg.TracelogDir = v
+	}
+	if v := os.Getenv("MIN_DELAY"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			cfg.MinDelay = d
+		}
+	}
+	if v := os.Getenv("TRACE_LOOKBACK_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.TraceLookbackDays = n
 		}
 	}
 }

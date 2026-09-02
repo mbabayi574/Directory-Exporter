@@ -13,5 +13,4 @@ targets:
     pattern: "*/nodes/*/#include/*"
     include: [ "input" , "output" , "discarded" , "rejected" ]
 
-tracelog:
-  - dir: /home/bobby/Documents/EventLinkTraceLogs
+tracelog_dir: /home/bobby/Documents/EventLinkTraceLogs

@@ -32,12 +32,13 @@ type DirMetrics struct {
 // CacheSnapshot is an immutable, point-in-time copy of the cache state.
 // It is safe to read without holding any lock.
 type CacheSnapshot struct {
-	Entries      []DirMetrics
-	LastScanTime time.Time
-	Ready        bool
-	ScanErrors   uint64
-	ReloadTotal  uint64
-	WatchedTotal int32
+	Entries        []DirMetrics
+	NodeActivities []NodeActivity
+	LastScanTime   time.Time
+	Ready          bool
+	ScanErrors     uint64
+	ReloadTotal    uint64
+	WatchedTotal   int32
 }
 
 // Cache is the central, thread-safe metrics store.
@@ -48,9 +49,10 @@ type CacheSnapshot struct {
 // Counters (ScanErrors, ReloadTotal) use sync/atomic so scan workers can
 // increment them without contending on the entries mutex.
 type Cache struct {
-	mu           sync.RWMutex
-	entries      map[string]DirMetrics
-	lastScanTime time.Time
+	mu             sync.RWMutex
+	entries        map[string]DirMetrics
+	nodeActivities map[string]NodeActivity
+	lastScanTime   time.Time
 
 	ready        atomic.Bool
 	scanErrors   atomic.Uint64
@@ -61,16 +63,20 @@ type Cache struct {
 // NewCache returns an empty cache. directory_cache_ready will be 0 until
 // the first successful SetBatch call.
 func NewCache() *Cache {
-	return &Cache{entries: make(map[string]DirMetrics)}
+	return &Cache{
+		entries:        make(map[string]DirMetrics),
+		nodeActivities: make(map[string]NodeActivity),
+	}
 }
 
-// SetBatch atomically swaps the entire entries map, records the scan
+// SetBatch atomically swaps the entries and node activities maps, records the scan
 // timestamp, adds newErrors to the cumulative error counter, and marks
 // the cache as ready (flipping directory_cache_ready from 0 → 1 on the
 // first call).
-func (c *Cache) SetBatch(entries map[string]DirMetrics, scanTime time.Time, newErrors uint64) {
+func (c *Cache) SetBatch(entries map[string]DirMetrics, activities map[string]NodeActivity, scanTime time.Time, newErrors uint64) {
 	c.mu.Lock()
 	c.entries = entries
+	c.nodeActivities = activities
 	c.lastScanTime = scanTime
 	c.mu.Unlock()
 
@@ -97,15 +103,20 @@ func (c *Cache) Snapshot() CacheSnapshot {
 	for _, v := range c.entries {
 		entries = append(entries, v)
 	}
+	activities := make([]NodeActivity, 0, len(c.nodeActivities))
+	for _, v := range c.nodeActivities {
+		activities = append(activities, v)
+	}
 	scanTime := c.lastScanTime
 	c.mu.RUnlock()
 
 	return CacheSnapshot{
-		Entries:      entries,
-		LastScanTime: scanTime,
-		Ready:        c.ready.Load(),
-		ScanErrors:   c.scanErrors.Load(),
-		ReloadTotal:  c.reloadTotal.Load(),
-		WatchedTotal: c.watchedTotal.Load(),
+		Entries:        entries,
+		NodeActivities: activities,
+		LastScanTime:   scanTime,
+		Ready:          c.ready.Load(),
+		ScanErrors:     c.scanErrors.Load(),
+		ReloadTotal:    c.reloadTotal.Load(),
+		WatchedTotal:   c.watchedTotal.Load(),
 	}
 }

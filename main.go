@@ -66,6 +66,9 @@ func main() {
 		"scan_timeout", cfg.ScanTimeout,
 		"max_files_per_dir", cfg.MaxFilesPerDir,
 		"max_stat_files", cfg.MaxStatFiles,
+		"tracelog_dir", cfg.TracelogDir,
+		"min_delay", cfg.MinDelay,
+		"trace_lookback_days", cfg.TraceLookbackDays,
 		"listen_addr", cfg.ListenAddr,
 	)
 

@@ -26,6 +26,19 @@ discovery_interval: "6h"
 max_stat_files:     5000
 max_files_per_dir:  0
 
+# ── Stream Node Activity & Delay Metrics (optional) ───────────────────────────
+# Path to EventLink execution trace logs for distributor delay tracking:
+# tracelog_dir: "/home/bobby/Documents/EventLinkTraceLogs"
+# Or via array format:
+# tracelog:
+#   - dir: /home/bobby/Documents/EventLinkTraceLogs
+
+# Minimum delay threshold (default: 600s / 10m). Delays below this are reported as 0:
+# min_delay: "600s"
+
+# Days of trace logs to look back when checking distributor activity (default: 7):
+# trace_lookback_days: 7
+
 # ── Targets ───────────────────────────────────────────────────────────────────
 # Each target is a base path (the Docker volume mount point) plus either:
 #   dirs: [list]   — explicit subdirectories to watch (no filesystem walk)
