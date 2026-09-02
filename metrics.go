@@ -260,6 +260,34 @@ func RenderMetrics(w io.Writer, snap CacheSnapshot) {
 				lv(st.Base), lv(st.Stream), lv(st.Node), lv(st.NodeType), val)
 		}
 	}
+
+	// ── Failed Nodes Metric (trace-log + stopped check) ─────────────────────
+	// Mirrors legacy shell logic:
+	//   error_line=`grep -nE "\[${NODE}\] .* (aborted and was disabled|Node index .* failed)" ${TRACEDIR}/execution_trace_${STREAM}_${DATE}_* | tail -1`
+	//   if [[ "${error_line}" != "" && ${STOPPED_INDEX} -eq 1 ]]; then FAILED_INDEX=1; fi
+	// A node is failed only when a matching failure line is found AND the node
+	// is currently stopped (heartbeat missing).
+	if len(snap.NodeFailedStatuses) > 0 {
+		sortedFailed := make([]NodeFailedStatus, len(snap.NodeFailedStatuses))
+		copy(sortedFailed, snap.NodeFailedStatuses)
+		sort.Slice(sortedFailed, func(i, j int) bool {
+			ki := sortedFailed[i].Base + "/" + sortedFailed[i].Stream + "/" + sortedFailed[i].Node + "/" + sortedFailed[i].NodeType
+			kj := sortedFailed[j].Base + "/" + sortedFailed[j].Stream + "/" + sortedFailed[j].Node + "/" + sortedFailed[j].NodeType
+			return ki < kj
+		})
+
+		help(w, "directory_node_failed",
+			"1 if the node is failed (failure pattern found in trace log and node is stopped), 0 otherwise.")
+		typ(w, "directory_node_failed", "gauge")
+		for _, f := range sortedFailed {
+			val := 0.0
+			if f.Failed {
+				val = 1.0
+			}
+			fmt.Fprintf(w, "directory_node_failed{base=%s,stream=%s,node=%s,type=%s} %g\n",
+				lv(f.Base), lv(f.Stream), lv(f.Node), lv(f.NodeType), val)
+		}
+	}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

@@ -37,6 +37,20 @@ type NodeStoppedStatus struct {
 	Stopped  bool   // true if heartbeat file is missing (node stopped)
 }
 
+// NodeFailedStatus holds the failure state for a single stream node.
+// Failed is true only when BOTH conditions hold (mirroring legacy FAILED_INDEX logic):
+//  1) A trace-log line matching  [NODE] .* (aborted and was disabled|Node index .* failed)
+//     is found in TRACEDIR/execution_trace_<STREAM>_<DATE>_*, and
+//  2) The node is currently stopped (heartbeat missing).
+type NodeFailedStatus struct {
+	Base       string
+	Stream     string
+	Node       string
+	NodeType   string  // "collector", "distributor", or empty
+	Failed     bool    // true if failure pattern found AND stopped==true
+	FailedTime float64 // Unix epoch of the matched failure line (0 if not failed)
+}
+
 // StreamNode represents a discovered node inside a stream directory.
 type StreamNode struct {
 	Base     string // target label or base path
@@ -393,6 +407,144 @@ func ScanAllNodeStoppedStatuses(nodes []StreamNode) map[string]NodeStoppedStatus
 			Node:     n.Node,
 			NodeType: n.NodeType,
 			Stopped:  stopped,
+		}
+	}
+	return results
+}
+
+// parseTraceTimestamp extracts the leading date/time fields from a trace log line
+// and converts them to a Unix timestamp. Expected prefix: "YYYYMMDD HHMMSS[.ms] ..."
+// or "YYYY-MM-DD HH:MM:SS[.ms] ...". Returns 0 if parsing fails.
+func parseTraceTimestamp(line string, loc *time.Location) float64 {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return 0
+	}
+	dateStr := fields[0]
+	timeStr := fields[1]
+	if dotIdx := strings.Index(timeStr, "."); dotIdx != -1 {
+		timeStr = timeStr[:dotIdx]
+	}
+	if len(timeStr) == 6 && !strings.Contains(timeStr, ":") {
+		timeStr = timeStr[0:2] + ":" + timeStr[2:4] + ":" + timeStr[4:6]
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	layouts := []string{
+		"20060102 15:04:05",
+		"2006-01-02 15:04:05",
+		"2006/01/02 15:04:05",
+		"20060102 150405",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, dateStr+" "+timeStr, loc); err == nil {
+			return float64(t.Unix())
+		}
+	}
+	return 0
+}
+
+// isNodeFailedInLogs searches TRACEDIR/execution_trace_<STREAM>_<DATE>_* files for
+// the failure pattern:  \[NODE\] .* (aborted and was disabled|Node index .* failed)
+// This mirrors: grep -nE "\[${NODE}\] .* (aborted and was disabled|Node index .* failed)"
+func isNodeFailedInLogs(tracelogDir, stream, node string, lookbackDays int, now time.Time) (bool, float64) {
+	if tracelogDir == "" || lookbackDays <= 0 {
+		return false, 0
+	}
+	// Build regex: \[NODE\] .* (aborted and was disabled|Node index .* failed)
+	pattern := `\[` + regexp.QuoteMeta(node) + `\] .* (aborted and was disabled|Node index .* failed)`
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return false, 0
+	}
+	loc := now.Location()
+	found := false
+	var lastTs float64
+	var latestTime float64
+	for d := 0; d < lookbackDays; d++ {
+		dateStr := now.AddDate(0, 0, -d).Format("20060102")
+		globPat := filepath.Join(tracelogDir, fmt.Sprintf("execution_trace_%s_%s_*", stream, dateStr))
+		matches, err := filepath.Glob(globPat)
+		if err != nil || len(matches) == 0 {
+			continue
+		}
+		sort.Strings(matches)
+		for _, tracePath := range matches {
+			f, err := os.Open(tracePath)
+			if err != nil {
+				continue
+			}
+			scanner := bufio.NewScanner(f)
+			// Allow long lines (trace logs can be verbose)
+			buf := make([]byte, 0, 64*1024)
+			scanner.Buffer(buf, 1024*1024)
+			for scanner.Scan() {
+				line := scanner.Text()
+				if re.MatchString(line) {
+					found = true
+					ts := parseTraceTimestamp(line, loc)
+					// Keep the latest timestamp (max) to emulate tail -1 picking last match
+					if ts > latestTime {
+						latestTime = ts
+					}
+					lastTs = ts
+				}
+			}
+			f.Close()
+		}
+		// If we found a match on the most recent day (d==0), prefer its latest timestamp
+		// but continue scanning older days only if no match yet, to keep behavior close to
+		// legacy (which only checks trace_date). For lookback, any match within window
+		// counts as failed, and we report the most recent timestamp.
+		if found && d == 0 && latestTime > 0 {
+			// Already have a recent failure; still check if there's a later timestamp
+			// within same day's remaining files – already captured. Break early for
+			// efficiency if we want lookback to be inclusive: keep scanning older days
+			// only to find any failure, but latestTime already is from most recent day
+			// so we can return immediately.
+			return true, latestTime
+		}
+		if found {
+			// Found in older day; continue to check more recent days? Actually we iterate
+			// from most recent to oldest, so if we are here at d>0, we have already
+			// checked newer days and found nothing, so this is the most recent available.
+			return true, lastTs
+		}
+	}
+	if found {
+		return true, lastTs
+	}
+	return false, 0
+}
+
+// ScanAllNodeFailedStatuses identifies failed nodes by trace-log search + stopped check.
+// A node is marked Failed=true only when BOTH conditions hold:
+//  1) A matching failure line is found in TRACEDIR/execution_trace_<STREAM>_<DATE>_*
+//  2) The node is currently stopped (heartbeat file missing).
+// This replicates the legacy condition: error_line != "" && STOPPED_INDEX==1 => FAILED_INDEX=1.
+func ScanAllNodeFailedStatuses(nodes []StreamNode, tracelogDir string, lookbackDays int, now time.Time) map[string]NodeFailedStatus {
+	results := make(map[string]NodeFailedStatus, len(nodes))
+	for _, n := range nodes {
+		stopped := IsNodeStopped(n.NodeDir)
+		failed := false
+		var failedTime float64
+		if stopped {
+			ok, ts := isNodeFailedInLogs(tracelogDir, n.Stream, n.Node, lookbackDays, now)
+			failed = ok
+			failedTime = ts
+		}
+		key := n.Base + "/" + n.Stream + "/" + n.Node
+		if n.NodeType != "" {
+			key = key + "/" + n.NodeType
+		}
+		results[key] = NodeFailedStatus{
+			Base:       n.Base,
+			Stream:     n.Stream,
+			Node:       n.Node,
+			NodeType:   n.NodeType,
+			Failed:     failed,
+			FailedTime: failedTime,
 		}
 	}
 	return results

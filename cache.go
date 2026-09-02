@@ -35,6 +35,7 @@ type CacheSnapshot struct {
 	Entries             []DirMetrics
 	NodeActivities      []NodeActivity
 	NodeStoppedStatuses []NodeStoppedStatus
+	NodeFailedStatuses  []NodeFailedStatus
 	LastScanTime        time.Time
 	Ready               bool
 	ScanErrors          uint64
@@ -54,6 +55,7 @@ type Cache struct {
 	entries           map[string]DirMetrics
 	nodeActivities    map[string]NodeActivity
 	nodeStopped       map[string]NodeStoppedStatus
+	nodeFailed        map[string]NodeFailedStatus
 	lastScanTime      time.Time
 
 	ready        atomic.Bool
@@ -69,18 +71,20 @@ func NewCache() *Cache {
 		entries:        make(map[string]DirMetrics),
 		nodeActivities: make(map[string]NodeActivity),
 		nodeStopped:    make(map[string]NodeStoppedStatus),
+		nodeFailed:     make(map[string]NodeFailedStatus),
 	}
 }
 
-// SetBatch atomically swaps the entries, node activities, and stopped-status maps,
+// SetBatch atomically swaps the entries, node activities, stopped and failed-status maps,
 // records the scan timestamp, adds newErrors to the cumulative error counter,
 // and marks the cache as ready (flipping directory_cache_ready from 0 → 1 on
 // the first call).
-func (c *Cache) SetBatch(entries map[string]DirMetrics, activities map[string]NodeActivity, stopped map[string]NodeStoppedStatus, scanTime time.Time, newErrors uint64) {
+func (c *Cache) SetBatch(entries map[string]DirMetrics, activities map[string]NodeActivity, stopped map[string]NodeStoppedStatus, failed map[string]NodeFailedStatus, scanTime time.Time, newErrors uint64) {
 	c.mu.Lock()
 	c.entries = entries
 	c.nodeActivities = activities
 	c.nodeStopped = stopped
+	c.nodeFailed = failed
 	c.lastScanTime = scanTime
 	c.mu.Unlock()
 
@@ -115,6 +119,10 @@ func (c *Cache) Snapshot() CacheSnapshot {
 	for _, v := range c.nodeStopped {
 		stopped = append(stopped, v)
 	}
+	failed := make([]NodeFailedStatus, 0, len(c.nodeFailed))
+	for _, v := range c.nodeFailed {
+		failed = append(failed, v)
+	}
 	scanTime := c.lastScanTime
 	c.mu.RUnlock()
 
@@ -122,6 +130,7 @@ func (c *Cache) Snapshot() CacheSnapshot {
 		Entries:             entries,
 		NodeActivities:      activities,
 		NodeStoppedStatuses: stopped,
+		NodeFailedStatuses:  failed,
 		LastScanTime:        scanTime,
 		Ready:               c.ready.Load(),
 		ScanErrors:          c.scanErrors.Load(),

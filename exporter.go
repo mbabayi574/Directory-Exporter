@@ -149,9 +149,11 @@ func (e *Exporter) ScanAll() {
 	watched := e.wl.Get()
 	if len(watched) == 0 {
 		nodes := DiscoverStreamNodes(e.cfg.Targets)
-		activities := ScanAllNodeActivities(context.Background(), nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, time.Now())
+		now := time.Now()
+		activities := ScanAllNodeActivities(context.Background(), nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, now)
 		stopped := ScanAllNodeStoppedStatuses(nodes)
-		e.cache.SetBatch(make(map[string]DirMetrics), activities, stopped, time.Now(), 0)
+		failed := ScanAllNodeFailedStatuses(nodes, e.cfg.TracelogDir, e.cfg.TraceLookbackDays, now)
+		e.cache.SetBatch(make(map[string]DirMetrics), activities, stopped, failed, now, 0)
 		e.log.Warn("watch list is empty — check your targets config and volume mounts")
 		return
 	}
@@ -167,13 +169,16 @@ func (e *Exporter) ScanAll() {
 
 	var activities map[string]NodeActivity
 	var stopped map[string]NodeStoppedStatus
+	var failed map[string]NodeFailedStatus
 	var actWg sync.WaitGroup
 	actWg.Add(1)
 	go func() {
 		defer actWg.Done()
 		nodes := DiscoverStreamNodes(e.cfg.Targets)
-		activities = ScanAllNodeActivities(ctx, nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, time.Now())
+		now := time.Now()
+		activities = ScanAllNodeActivities(ctx, nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, now)
 		stopped = ScanAllNodeStoppedStatuses(nodes)
+		failed = ScanAllNodeFailedStatuses(nodes, e.cfg.TracelogDir, e.cfg.TraceLookbackDays, now)
 	}()
 
 	sem := make(chan struct{}, e.cfg.ScanWorkers)
@@ -230,10 +235,13 @@ func (e *Exporter) ScanAll() {
 	if stopped == nil {
 		stopped = make(map[string]NodeStoppedStatus)
 	}
+	if failed == nil {
+		failed = make(map[string]NodeFailedStatus)
+	}
 	if activities == nil {
 		activities = make(map[string]NodeActivity)
 	}
-	e.cache.SetBatch(results, activities, stopped, time.Now(), errors)
+	e.cache.SetBatch(results, activities, stopped, failed, time.Now(), errors)
 
 	if timedOut {
 		e.log.Warn("scan cycle timed out — partial results written to cache",
