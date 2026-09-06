@@ -119,27 +119,6 @@ func RenderMetrics(w io.Writer, snap CacheSnapshot) {
 				lv(dm.Labels.Base), lv(dm.Labels.Stream), lv(dm.Labels.Type),
 				dm.ScanDurationSec)
 		}
-
-		help(w, "directory_scrape_success",
-			"Accessibility state: 1 = directory is readable, 0 = permission error or vanished.")
-		typ(w, "directory_scrape_success", "gauge")
-		for _, dm := range sorted {
-			fmt.Fprintf(w, "directory_scrape_success{base=%s,stream=%s,type=%s} %g\n",
-				lv(dm.Labels.Base), lv(dm.Labels.Stream), lv(dm.Labels.Type),
-				dm.ScanSuccess)
-		}
-
-		help(w, "directory_scan_truncated",
-			"1 if the last scan was cut short by MAX_FILES_PER_DIR or scan timeout; 0 otherwise.")
-		typ(w, "directory_scan_truncated", "gauge")
-		for _, dm := range sorted {
-			truncVal := 0.0
-			if dm.Truncated {
-				truncVal = 1.0
-			}
-			fmt.Fprintf(w, "directory_scan_truncated{base=%s,stream=%s,type=%s} %g\n",
-				lv(dm.Labels.Base), lv(dm.Labels.Stream), lv(dm.Labels.Type), truncVal)
-		}
 	}
 
 	// ── Node Activity & Delay Metrics ─────────────────────────────────────────

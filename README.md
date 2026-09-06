@@ -54,7 +54,7 @@ Application metrics and logs tell you what the app *thinks* is happening. Direct
 **Two-phase scan design:**
 
 1. **Count phase** — reads all directory entries via `getdents` (kernel call, no per-file I/O). File count is always exact and fast.
-2. **Stat phase** — calls `lstat` on up to `max_stat_files` entries to get modification times. Capped to keep scans fast on large directories. When capped, `directory_scan_truncated` is set to `1`.
+2. **Stat phase** — calls `lstat` on up to `max_stat_files` entries to get modification times. Capped to keep scans fast on large directories.
 
 Metrics are always served from the in-memory cache. The `/metrics` endpoint never touches disk — response time is sub-millisecond regardless of directory size or file count.
 
@@ -80,8 +80,6 @@ All per-directory metrics carry `base`, `stream`, and `type` labels derived from
 | `directory_oldest_file_timestamp_seconds` | Gauge | mtime of the oldest file — detects stuck queues |
 | `directory_newest_file_timestamp_seconds` | Gauge | mtime of the newest file — detects halted ingest |
 | `directory_scrape_duration_seconds` | Gauge | Wall-clock time of the last scan for this directory |
-| `directory_scrape_success` | Gauge | `1` = readable, `0` = permission error or directory vanished |
-| `directory_scan_truncated` | Gauge | `1` if stat phase was capped by `max_stat_files`; timestamps are approximate |
 | `directory_collector_last_activity_timestamp_seconds` | Gauge | Unix timestamp of the last file processed by collector node |
 | `directory_collector_delay_seconds` | Gauge | Delay in seconds since last collected file (0 if <= `min_delay`) |
 | `directory_distributor_last_activity_timestamp_seconds` | Gauge | Unix timestamp of the last file processed by distributor node |
@@ -121,11 +119,6 @@ All per-directory metrics carry `base`, `stream`, and `type` labels derived from
 - alert: DirectoryStuckFile
   expr: time() - directory_oldest_file_timestamp_seconds > 7200
   and directory_file_count > 0
-
-# Directory disappeared or permission error
-- alert: DirectoryScrapeDown
-  expr: directory_scrape_success == 0
-  for: 1m
 
 # Exporter scan loop stalled
 - alert: DirectoryExporterCacheStale
@@ -191,7 +184,7 @@ discovery_interval: "6h"     # how often to re-discover new subdirectories
 
 # Stat cap: number of lstat() calls per directory for timestamp computation.
 # 0 = stat every file (accurate but slow on large dirs).
-# 5000 = fast; timestamps reflect only the first 5k files (sets scan_truncated=1).
+# 5000 = fast; timestamps reflect only the first 5k files.
 max_stat_files:    5000
 max_files_per_dir: 0         # 0 = count every file (always exact)
 
@@ -443,7 +436,6 @@ When directories contain hundreds of thousands of files, two settings control th
 | `max_stat_files` | `5000` | `0` (unlimited) |
 | File count | Always exact | Always exact |
 | Timestamps (oldest/newest) | Approximate — first 5k files only | Exact — all files statted |
-| `directory_scan_truncated` | `1` | `0` |
 | Scan time (333k files, SSD) | ~4–7 seconds | ~10–20 minutes |
 
 If you need accurate timestamps on large directories, increase `max_stat_files` and adjust `scan_timeout` and `scan_interval` proportionally:

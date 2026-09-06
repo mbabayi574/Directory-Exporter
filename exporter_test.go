@@ -749,12 +749,17 @@ func TestRenderMetrics_Ready(t *testing.T) {
 		"directory_cache_ready 1",
 		"directory_watched_total 1",
 		`directory_file_count{base="/streams",stream="orders",type="buffer"} 42`,
-		`directory_scrape_success{base="/streams",stream="orders",type="buffer"} 1`,
 	}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing expected line:\n  want: %s\n  in:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "directory_scrape_success") {
+		t.Error("unexpected directory_scrape_success in /metrics output")
+	}
+	if strings.Contains(out, "directory_scan_truncated") {
+		t.Error("unexpected directory_scan_truncated in /metrics output")
 	}
 }
 
@@ -935,8 +940,8 @@ func TestScanAll_MetricsTruncatedAfterCap(t *testing.T) {
 
 	var metricsBuf bytes.Buffer
 	RenderMetrics(&metricsBuf, snap)
-	if !strings.Contains(metricsBuf.String(), "directory_scan_truncated") {
-		t.Error("expected directory_scan_truncated in /metrics output")
+	if strings.Contains(metricsBuf.String(), "directory_scan_truncated") {
+		t.Error("unexpected directory_scan_truncated in /metrics output")
 	}
 }
 
