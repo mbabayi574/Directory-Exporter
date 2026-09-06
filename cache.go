@@ -34,6 +34,7 @@ type DirMetrics struct {
 type CacheSnapshot struct {
 	Entries        []DirMetrics
 	NodeActivities []NodeActivity
+	NodeBuffers    []NodeBuffer
 	LastScanTime   time.Time
 	Ready          bool
 	ScanErrors     uint64
@@ -52,6 +53,7 @@ type Cache struct {
 	mu             sync.RWMutex
 	entries        map[string]DirMetrics
 	nodeActivities map[string]NodeActivity
+	nodeBuffers    map[string]NodeBuffer
 	lastScanTime   time.Time
 
 	ready        atomic.Bool
@@ -66,17 +68,19 @@ func NewCache() *Cache {
 	return &Cache{
 		entries:        make(map[string]DirMetrics),
 		nodeActivities: make(map[string]NodeActivity),
+		nodeBuffers:    make(map[string]NodeBuffer),
 	}
 }
 
-// SetBatch atomically swaps the entries and node activities maps, records the scan
-// timestamp, adds newErrors to the cumulative error counter, and marks
-// the cache as ready (flipping directory_cache_ready from 0 → 1 on the
-// first call).
-func (c *Cache) SetBatch(entries map[string]DirMetrics, activities map[string]NodeActivity, scanTime time.Time, newErrors uint64) {
+// SetBatch atomically swaps the entries, node activities, and node buffer
+// maps, records the scan timestamp, adds newErrors to the cumulative error
+// counter, and marks the cache as ready (flipping directory_cache_ready
+// from 0 → 1 on the first call).
+func (c *Cache) SetBatch(entries map[string]DirMetrics, activities map[string]NodeActivity, buffers map[string]NodeBuffer, scanTime time.Time, newErrors uint64) {
 	c.mu.Lock()
 	c.entries = entries
 	c.nodeActivities = activities
+	c.nodeBuffers = buffers
 	c.lastScanTime = scanTime
 	c.mu.Unlock()
 
@@ -107,12 +111,17 @@ func (c *Cache) Snapshot() CacheSnapshot {
 	for _, v := range c.nodeActivities {
 		activities = append(activities, v)
 	}
+	buffers := make([]NodeBuffer, 0, len(c.nodeBuffers))
+	for _, v := range c.nodeBuffers {
+		buffers = append(buffers, v)
+	}
 	scanTime := c.lastScanTime
 	c.mu.RUnlock()
 
 	return CacheSnapshot{
 		Entries:        entries,
 		NodeActivities: activities,
+		NodeBuffers:    buffers,
 		LastScanTime:   scanTime,
 		Ready:          c.ready.Load(),
 		ScanErrors:     c.scanErrors.Load(),

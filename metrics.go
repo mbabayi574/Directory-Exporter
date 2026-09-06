@@ -143,8 +143,7 @@ func RenderMetrics(w io.Writer, snap CacheSnapshot) {
 	}
 
 	// ── Node Activity & Delay Metrics ─────────────────────────────────────────
-	if len(snap.NodeActivities) > 0 {
-		sortedAct := make([]NodeActivity, len(snap.NodeActivities))
+	if len(snap.NodeActivities) > 0 {		sortedAct := make([]NodeActivity, len(snap.NodeActivities))
 		copy(sortedAct, snap.NodeActivities)
 		sort.Slice(sortedAct, func(i, j int) bool {
 			ki := sortedAct[i].Base + "/" + sortedAct[i].Stream + "/" + sortedAct[i].Node + "/" + sortedAct[i].NodeType
@@ -230,6 +229,30 @@ func RenderMetrics(w io.Writer, snap CacheSnapshot) {
 						lv(act.Base), lv(act.Stream), lv(act.Node), lv(act.NodeType), lv(act.LastFile))
 				}
 			}
+		}
+	}
+
+	// ── Node Buffer Backlog Metrics (monitoring.sh BUFFER_INDEX) ─────────────
+	// Non-recursive regular-file count of each node's resolved input buffer
+	// directory (collector SourceDirectory, general-node InDataPath, or
+	// database-loader upload path). Reuses directory_file_count when the
+	// buffer is already watched, so no extra disk I/O in the common case.
+	if len(snap.NodeBuffers) > 0 {
+		sortedBuf := make([]NodeBuffer, len(snap.NodeBuffers))
+		copy(sortedBuf, snap.NodeBuffers)
+		sort.Slice(sortedBuf, func(i, j int) bool {
+			ki := sortedBuf[i].Base + "/" + sortedBuf[i].Stream + "/" + sortedBuf[i].Node + "/" + sortedBuf[i].NodeType
+			kj := sortedBuf[j].Base + "/" + sortedBuf[j].Stream + "/" + sortedBuf[j].Node + "/" + sortedBuf[j].NodeType
+			return ki < kj
+		})
+
+		help(w, "directory_buffer_files",
+			"Number of files waiting in the node's input buffer directory (non-recursive, mirrors monitoring.sh BUFFER_INDEX). 0 when empty, missing, or unreadable.")
+		typ(w, "directory_buffer_files", "gauge")
+		for _, nb := range sortedBuf {
+			fmt.Fprintf(w, "directory_buffer_files{base=%s,stream=%s,node=%s,type=%s} %d\n",
+				lv(nb.Base), lv(nb.Stream), lv(nb.Node), lv(nb.NodeType),
+				nb.FileCount)
 		}
 	}
 }

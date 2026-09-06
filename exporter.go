@@ -150,7 +150,8 @@ func (e *Exporter) ScanAll() {
 	if len(watched) == 0 {
 		nodes := DiscoverStreamNodes(e.cfg.Targets)
 		activities := ScanAllNodeActivities(context.Background(), nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, time.Now())
-		e.cache.SetBatch(make(map[string]DirMetrics), activities, time.Now(), 0)
+		buffers := ScanAllNodeBuffers(context.Background(), nodes, make(map[string]DirMetrics), nil, e.cfg.ScanWorkers)
+		e.cache.SetBatch(make(map[string]DirMetrics), activities, buffers, time.Now(), 0)
 		e.log.Warn("watch list is empty — check your targets config and volume mounts")
 		return
 	}
@@ -166,10 +167,10 @@ func (e *Exporter) ScanAll() {
 
 	var activities map[string]NodeActivity
 	var actWg sync.WaitGroup
+	nodes := DiscoverStreamNodes(e.cfg.Targets)
 	actWg.Add(1)
 	go func() {
 		defer actWg.Done()
-		nodes := DiscoverStreamNodes(e.cfg.Targets)
 		activities = ScanAllNodeActivities(ctx, nodes, e.cfg.TracelogDir, e.cfg.MinDelay, e.cfg.TraceLookbackDays, e.cfg.ScanWorkers, time.Now())
 	}()
 
@@ -219,12 +220,17 @@ func (e *Exporter) ScanAll() {
 	wg.Wait()
 	actWg.Wait()
 
+	// Buffer backlogs reuse the just-completed directory scan when the input
+	// buffer path coincides with a watched directory (zero extra I/O);
+	// external SourceDirectory paths get a cheap count-only scan.
+	buffers := ScanAllNodeBuffers(ctx, nodes, results, nil, e.cfg.ScanWorkers)
+
 	elapsed := time.Since(cycleStart)
 	timedOut := ctx.Err() != nil
 	errors := errCount.Load()
 	truncs := truncCount.Load()
 
-	e.cache.SetBatch(results, activities, time.Now(), errors)
+	e.cache.SetBatch(results, activities, buffers, time.Now(), errors)
 
 	if timedOut {
 		e.log.Warn("scan cycle timed out — partial results written to cache",

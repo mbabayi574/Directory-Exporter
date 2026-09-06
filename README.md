@@ -87,6 +87,7 @@ All per-directory metrics carry `base`, `stream`, and `type` labels derived from
 | `directory_distributor_last_activity_timestamp_seconds` | Gauge | Unix timestamp of the last file processed by distributor node |
 | `directory_distributor_delay_seconds` | Gauge | Delay in seconds since last distributed file (0 if <= `min_delay`) |
 | `directory_node_last_file_info` | Gauge | Value `1` with label `filename` indicating the last processed file |
+| `directory_buffer_files` | Gauge | Files waiting in the node's input buffer dir (non-recursive, per `base`/`stream`/`node`/`type`; mirrors legacy `monitoring.sh` `BUFFER_INDEX`) |
 
 ### Recommended Alert Rules
 
@@ -110,6 +111,11 @@ All per-directory metrics carry `base`, `stream`, and `type` labels derived from
 - alert: DistributorNodeDelayed
   expr: directory_distributor_delay_seconds > 1800
   for: 5m
+
+# Input buffer backlog growing — files piling up in a node's input directory
+- alert: DirectoryBufferGrowing
+  expr: directory_buffer_files > 1000
+  for: 10m
 
 # Stuck file — oldest file hasn't moved in 2 hours
 - alert: DirectoryStuckFile
