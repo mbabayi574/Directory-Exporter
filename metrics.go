@@ -233,9 +233,8 @@ func RenderMetrics(w io.Writer, snap CacheSnapshot) {
 	}
 
 	// ── Node Buffer Backlog Metrics (monitoring.sh BUFFER_INDEX) ─────────────
-	// Non-recursive regular-file count of each node's resolved input buffer
-	// directory (collector SourceDirectory, general-node InDataPath, or
-	// database-loader upload path). Reuses directory_file_count when the
+	// Non-recursive regular-file count of each collector node's resolved
+	// SourceDirectory buffer directory. Reuses directory_file_count when the
 	// buffer is already watched, so no extra disk I/O in the common case.
 	if len(snap.NodeBuffers) > 0 {
 		sortedBuf := make([]NodeBuffer, len(snap.NodeBuffers))
@@ -247,7 +246,7 @@ func RenderMetrics(w io.Writer, snap CacheSnapshot) {
 		})
 
 		help(w, "directory_buffer_files",
-			"Number of files waiting in the node's input buffer directory (non-recursive, mirrors monitoring.sh BUFFER_INDEX). 0 when empty, missing, or unreadable.")
+			"Number of files waiting in the collector node's SourceDirectory buffer directory (non-recursive, mirrors monitoring.sh BUFFER_INDEX). 0 when empty, missing, or unreadable.")
 		typ(w, "directory_buffer_files", "gauge")
 		for _, nb := range sortedBuf {
 			fmt.Fprintf(w, "directory_buffer_files{base=%s,stream=%s,node=%s,type=%s} %d\n",

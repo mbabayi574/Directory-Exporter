@@ -9,15 +9,15 @@ import (
 	"sync"
 )
 
-// NodeBuffer holds the input-buffer backlog for a single stream node.
+// NodeBuffer holds the input-buffer backlog for a single stream collector node.
 // It mirrors monitoring.sh BUFFER_INDEX (STRAMES_DETAIL[$i, $BUFFER_INDEX]):
-// the non-recursive regular-file count of the node's resolved input directory.
+// the non-recursive regular-file count of the collector node's SourceDirectory.
 type NodeBuffer struct {
 	Base       string
 	Stream     string
 	Node       string
-	NodeType   string // "collector", "distributor", or "" when unknown
-	BufferPath string // resolved input directory ("-" when unresolved/DATA_STORAGE)
+	NodeType   string // "collector"
+	BufferPath string // resolved SourceDirectory ("-" when unresolved)
 	FileCount  int64
 	Success    bool // true when the buffer dir was readable and counted
 }
@@ -26,16 +26,35 @@ var (
 	quotedValueRegex = regexp.MustCompile(`"([^"]+)"`)
 )
 
+// isCollector returns true if nodeType indicates a collector node.
+func isCollector(nodeType string) bool {
+	lower := strings.ToLower(strings.TrimSpace(nodeType))
+	return strings.Contains(lower, "collector") || lower == "col"
+}
+
+// extractSourceDirectory extracts the filesystem path from a SourceDirectory config line.
+// Supports:
+//   SourceDirectory "/path/to/dir"
+//   SourceDirectory\t"/path/to/dir"
+//   SourceDirectory: "/path/to/dir"
+//   SourceDirectory: /path/to/dir
+//   SourceDirectory /path/to/dir
+func extractSourceDirectory(line string) string {
+	if m := quotedValueRegex.FindStringSubmatch(line); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	trimmed := strings.TrimPrefix(line, "SourceDirectory")
+	trimmed = strings.TrimLeft(trimmed, " \t:")
+	fields := strings.Fields(trimmed)
+	if len(fields) > 0 {
+		return strings.Trim(fields[0], `"'`)
+	}
+	return ""
+}
+
 // resolveNodeBufferPaths parses ${nodeDir}/control/1/config and returns the
-// node type plus every input buffer directory found.
-//
-// Mirrors monitoring.sh get_streams_detail (lines 160-254):
-//   - collector nodes: SourceDirectory "..." (or DATA_STORAGE sentinel)
-//   - general nodes:   InDataPath ... "..."
-//   - database loaders: ${ElrHome}/upload/${DatabaseTable}/in/
-//
-// One config may yield multiple input paths (one per matching line, as the
-// shell script appends a STRAMES_DETAIL row per match). Callers sum the counts.
+// node type plus any SourceDirectory paths found when the node is a collector.
+// Non-collector nodes return their node type and nil paths.
 func resolveNodeBufferPaths(nodeDir string) (string, []string) {
 	data, err := os.ReadFile(filepath.Join(nodeDir, "control", "1", "config"))
 	if err != nil {
@@ -43,15 +62,8 @@ func resolveNodeBufferPaths(nodeDir string) (string, []string) {
 	}
 
 	var nodeType string
-	var elrHome, databaseTable string
-	var sourceDir string
-	var hasDataStorage bool
-	var inDataPaths []string
-	var hasDatabaseLoaderLine bool
+	var sourceDirs []string
 
-	// First pass: collect raw values (order-independent, unlike the shell
-	// script which is order-sensitive — this is more robust while preserving
-	// the same priority rules below).
 	lines := strings.Split(string(data), "\n")
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
@@ -62,88 +74,17 @@ func resolveNodeBufferPaths(nodeDir string) (string, []string) {
 			if m := quotedValueRegex.FindStringSubmatch(line); len(m) > 1 {
 				nodeType = m[1]
 			}
-		} else if strings.HasPrefix(line, "ElrHome") {
-			hasDatabaseLoaderLine = true
-			if m := quotedValueRegex.FindStringSubmatch(line); len(m) > 1 {
-				elrHome = m[1]
-			}
-		} else if strings.HasPrefix(line, "DatabaseTable") {
-			if m := quotedValueRegex.FindStringSubmatch(line); len(m) > 1 {
-				databaseTable = m[1]
-			}
-		}
-		if strings.HasPrefix(line, "SourceDirectory") {
-			if m := quotedValueRegex.FindStringSubmatch(line); len(m) > 1 {
-				sourceDir = m[1]
-			}
-		}
-		if strings.Contains(line, "DataStorage") {
-			hasDataStorage = true
-		}
-		if strings.HasPrefix(line, "InDataPath") {
-			if p := extractInDataPath(line); p != "" {
-				inDataPaths = append(inDataPaths, p)
+		} else if strings.HasPrefix(line, "SourceDirectory") {
+			if dir := extractSourceDirectory(line); dir != "" {
+				sourceDirs = append(sourceDirs, dir)
 			}
 		}
 	}
 
-	lowerType := strings.ToLower(nodeType)
-	isCollector := strings.Contains(lowerType, "collector")
-
-	if isCollector {
-		// Collectors: SourceDirectory wins; DATA_STORAGE means "no
-		// filesystem buffer" (legacy script records link_state=NOT_EXIST
-		// and a backlog of 0).
-		if sourceDir != "" {
-			return nodeType, []string{sourceDir}
-		}
-		if hasDataStorage {
-			return nodeType, nil
-		}
-		// Fall through to database-loader path if present.
-		if hasDatabaseLoaderLine && elrHome != "" && databaseTable != "" {
-			return nodeType, []string{filepath.Join(elrHome, "upload", databaseTable, "in")}
-		}
+	if nodeType != "" && !isCollector(nodeType) {
 		return nodeType, nil
 	}
-
-	// General nodes: InDataPath wins (may be multiple lines → multiple paths).
-	if len(inDataPaths) > 0 {
-		return nodeType, inDataPaths
-	}
-	if hasDatabaseLoaderLine && elrHome != "" && databaseTable != "" {
-		return nodeType, []string{filepath.Join(elrHome, "upload", databaseTable, "in")}
-	}
-	return nodeType, nil
-}
-
-// extractInDataPath extracts the filesystem path from an InDataPath config
-// line, mirroring monitoring.sh `cut -d':' -f2 | cut -d'"' -f1`.
-//
-// Real-world line formats:
-//   - InDataPath "COLLECTED,file:/comptel/.../COLLECTED_0_972" → /comptel/.../COLLECTED_0_972
-//   - InDataPath "COLLECTED,file,copy:/comptel/.../COLLECTED_1_968" → /comptel/.../COLLECTED_1_968
-//   - InDataPath: "/data/streams/.../input" → /data/streams/.../input
-func extractInDataPath(line string) string {
-	quoted := ""
-	if m := quotedValueRegex.FindStringSubmatch(line); len(m) > 1 {
-		quoted = strings.TrimSpace(m[1])
-	} else if idx := strings.Index(line, ":"); idx != -1 {
-		quoted = strings.Trim(strings.TrimSpace(line[idx+1:]), `"'`)
-		if f := strings.Fields(quoted); len(f) > 0 {
-			quoted = f[0]
-		}
-	}
-	if quoted == "" {
-		return ""
-	}
-	// Strip the "<stream>,file[,...]:" transport prefix when present, e.g.
-	// "COLLECTED,file:/path" and "COLLECTED,file,copy:/path" → "/path".
-	// Plain paths (no file-transport marker) are returned as-is.
-	if idx := strings.LastIndex(quoted, ":"); idx != -1 && strings.Contains(quoted[:idx], "file") {
-		return strings.TrimSpace(quoted[idx+1:])
-	}
-	return quoted
+	return nodeType, sourceDirs
 }
 
 // countBufferFiles counts regular files directly inside path (non-recursive),
@@ -186,12 +127,11 @@ func countBufferFiles(ctx context.Context, path string) (int64, bool) {
 	return count, true
 }
 
-// ScanAllNodeBuffers resolves each node's input buffer directory and counts
-// files, reusing already-scanned directory_file_count values when the buffer
-// path coincides with a watched directory (best performance: zero extra I/O
-// for the common `*/nodes/*/[input|...]` watch pattern). Unwatched/external
-// buffer paths (e.g. collector SourceDirectory outside the base) get a cheap
-// count-only scan with no lstat timestamp work.
+// ScanAllNodeBuffers resolves each collector node's SourceDirectory buffer
+// directory and counts files, reusing already-scanned directory_file_count values
+// when the buffer path coincides with a watched directory (best performance: zero
+// extra I/O). Unwatched external SourceDirectory paths get a cheap count-only scan.
+// Non-collector nodes (NodeType != "collector") are skipped entirely.
 func ScanAllNodeBuffers(ctx context.Context, nodes []StreamNode, results map[string]DirMetrics, byPath map[string]string, workers int) map[string]NodeBuffer {
 	_ = byPath // reserved for future path-alias support
 	if len(nodes) == 0 {
@@ -217,6 +157,12 @@ func ScanAllNodeBuffers(ctx context.Context, nodes []StreamNode, results map[str
 		if ctx.Err() != nil {
 			break
 		}
+
+		// Fast path: skip nodes that are already known not to be collectors
+		if n.NodeType != "" && !isCollector(n.NodeType) {
+			continue
+		}
+
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(sn StreamNode) {
@@ -227,10 +173,17 @@ func ScanAllNodeBuffers(ctx context.Context, nodes []StreamNode, results map[str
 			if nodeType == "" {
 				nodeType = sn.NodeType
 			}
+			if nodeType == "" {
+				nodeType = detectNodeType(sn.NodeDir, sn.Node)
+			}
+			if !isCollector(nodeType) {
+				return
+			}
+			nodeType = "collector"
 			key := sn.Base + "/" + sn.Stream + "/" + sn.Node + "/" + nodeType
 
 			var total int64
-			okAll := true
+			okAll := len(paths) > 0
 			anyOK := false
 			resolved := strings.Join(paths, ",")
 			for _, p := range paths {
@@ -249,45 +202,7 @@ func ScanAllNodeBuffers(ctx context.Context, nodes []StreamNode, results map[str
 				anyOK = true
 			}
 
-			if !anyOK {
-				// No config-resolved buffer path was countable (typical when
-				// the config references production paths like /comptel/...
-				// that don't exist where the exporter runs). Fall back to
-				// the node's local input/ subtree, reusing the already
-				// scanned directory_file_count values: every watched dir at
-				// or under <nodeDir>/input contributes its (non-recursive)
-				// count, so the sum equals the recursive total under input/.
-				inputDir := filepath.Clean(filepath.Join(sn.NodeDir, "input"))
-				var fbTotal int64
-				fbOK := false
-				for absPath, dm := range cached {
-					if dm.ScanSuccess != 1 {
-						continue
-					}
-					if absPath == inputDir || strings.HasPrefix(absPath, inputDir+string(os.PathSeparator)) {
-						fbTotal += dm.FileCount
-						fbOK = true
-					}
-				}
-				if fbOK {
-					total = fbTotal
-					okAll = true
-					anyOK = true
-					resolved = inputDir
-				} else if _, statErr := os.Stat(inputDir); statErr == nil {
-					// Watched nothing under input/ (e.g. discovery pattern
-					// doesn't cover it) but the dir exists — count it
-					// directly (non-recursive, like directory_file_count).
-					if c, ok := countBufferFiles(ctx, inputDir); ok {
-						total = c
-						okAll = true
-						anyOK = true
-						resolved = inputDir
-					}
-				}
-			}
-
-			if !anyOK && len(paths) == 0 {
+			if len(paths) == 0 {
 				resolved = "-"
 			}
 
